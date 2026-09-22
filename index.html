@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Habits</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Your daily rhythm</p>
+        <h1>Habit tracker</h1>
+      </div>
+      <time id="today-label" class="today-label"></time>
+    </header>
+
+    <section class="add-habit" aria-labelledby="add-habit-heading">
+      <h2 id="add-habit-heading">Add a habit</h2>
+      <form id="habit-form" class="habit-form">
+        <label class="sr-only" for="habit-name">Habit name</label>
+        <input id="habit-name" name="habitName" type="text" maxlength="80" placeholder="e.g. Read for 20 minutes" autocomplete="off" required>
+        <button type="submit">Add habit</button>
+      </form>
+    </section>
+
+    <section class="habit-list-section" aria-labelledby="habits-heading">
+      <div class="section-heading">
+        <h2 id="habits-heading">Your habits</h2>
+        <span id="habit-count" class="habit-count">0 habits</span>
+      </div>
+      <div id="habit-list" class="habit-list" aria-live="polite"></div>
+      <p id="empty-state" class="empty-state">No habits yet. Add one above to get started.</p>
+    </section>
+  </main>
+
+  <template id="habit-card-template">
+    <article class="habit-card">
+      <div class="habit-details">
+        <h3 class="habit-name"></h3>
+        <p class="streak"><strong class="streak-number">0</strong> day streak</p>
+      </div>
+      <div class="habit-actions">
+        <button class="complete-button" type="button" aria-pressed="false"></button>
+        <button class="delete-button" type="button" aria-label="Delete habit">Delete</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
