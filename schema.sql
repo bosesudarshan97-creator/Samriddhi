@@ -1,7 +1,10 @@
 -- Run this in Supabase SQL Editor before connecting the shared version.
 create table public.members (id uuid primary key default gen_random_uuid(), name text not null, phone text not null, active boolean not null default true, created_at timestamptz not null default now());
 create table public.loans (id uuid primary key default gen_random_uuid(), member_id uuid not null references public.members(id), principal numeric(12, 2) not null check (principal > 0), loan_date date not null default current_date, created_at timestamptz not null default now());
-create table public.payments (id uuid primary key default gen_random_uuid(), loan_id uuid not null references public.loans(id), amount numeric(12, 2) not null check (amount > 0), payment_date date not null default current_date, created_at timestamptz not null default now());
+create table public.payments (id uuid primary key default gen_random_uuid(), loan_id uuid not null references public.loans(id), amount numeric(12, 2) not null check (amount > 0), payment_type text not null default 'auto' check (payment_type in ('interest', 'principal', 'auto')), payment_date date not null default current_date, created_at timestamptz not null default now());
+alter table public.payments add column if not exists payment_type text not null default 'auto';
+alter table public.payments drop constraint if exists payments_payment_type_check;
+alter table public.payments add constraint payments_payment_type_check check (payment_type in ('interest', 'principal', 'auto'));
 create table public.contributions (id uuid primary key default gen_random_uuid(), member_id uuid references public.members(id), amount numeric(12, 2) not null check (amount > 0), contribution_date date not null default current_date, note text, created_at timestamptz not null default now());
 create table public.profiles (id uuid primary key references auth.users(id) on delete cascade, role text not null default 'member' check (role in ('admin', 'member')), created_at timestamptz not null default now());
 alter table public.members enable row level security;
@@ -19,3 +22,7 @@ create policy "admins can manage payments" on public.payments for all to authent
 create policy "authenticated users can read contributions" on public.contributions for select to authenticated using (true);
 create policy "admins can manage contributions" on public.contributions for all to authenticated using (public.is_admin()) with check (public.is_admin());
 create policy "authenticated users can read profiles" on public.profiles for select to authenticated using (true);
+do $$ begin alter publication supabase_realtime add table public.members; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.loans; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.payments; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.contributions; exception when duplicate_object then null; end $$;
