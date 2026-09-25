@@ -3,51 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Daily Habits</title>
+  <title>Samriddhi Community Fund | Lending ledger</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+  <section id="auth-screen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <img class="fund-logo auth-logo" src="assets/fund-logo.png" alt="Samriddhi Community Fund logo">
+      <p class="eyebrow">Together we grow</p>
+      <h1>Sign in to the fund</h1>
+      <p class="auth-copy">Members can view the shared ledger. Admins can manage contributions, loans, and payments.</p>
+      <form id="auth-form" class="auth-form">
+        <label for="auth-email">Email</label>
+        <input id="auth-email" type="email" autocomplete="email" required>
+        <label for="auth-password">Password</label>
+        <input id="auth-password" type="password" autocomplete="current-password" minlength="6" required>
+        <p id="auth-error" class="form-error" role="alert" hidden></p>
+        <button class="primary-button" type="submit">Sign in</button>
+      </form>
+      <button id="auth-signup" class="text-button" type="button">Create member account</button>
+    </div>
+  </section>
   <main class="app-shell">
     <header class="page-header">
-      <div>
-        <p class="eyebrow">Your daily rhythm</p>
-        <h1>Habit tracker</h1>
+      <div class="brand-lockup">
+        <img class="fund-logo" src="assets/fund-logo.png" alt="Samriddhi Community Fund logo">
+        <div>
+        <p class="eyebrow">Together we grow</p>
+        <h1>Samriddhi Community Fund</h1>
+        <p class="subtitle">Track contributions, loans, and repayments in one place.</p>
+        </div>
       </div>
-      <time id="today-label" class="today-label"></time>
+      <div class="header-actions">
+        <span id="user-badge" class="user-badge" hidden></span>
+        <button id="sign-out" class="text-button" type="button" hidden>Sign out</button>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Dark mode</button>
+      </div>
     </header>
 
-    <section class="add-habit" aria-labelledby="add-habit-heading">
-      <h2 id="add-habit-heading">Add a habit</h2>
-      <form id="habit-form" class="habit-form">
-        <label class="sr-only" for="habit-name">Habit name</label>
-        <input id="habit-name" name="habitName" type="text" maxlength="80" placeholder="e.g. Read for 20 minutes" autocomplete="off" required>
-        <button type="submit">Add habit</button>
-      </form>
+    <section class="summary-grid" aria-label="Fund summary">
+      <article class="summary-card summary-card-highlight"><span>Available fund</span><strong id="available-fund">₹0</strong><small>Contributions plus repayments less loans issued</small></article>
+      <article class="summary-card"><span>Total contributions</span><strong id="contribution-total">₹0</strong><small>Member deposits</small></article>
+      <article class="summary-card"><span>Principal recovered</span><strong id="principal-received">₹0</strong><small>Payments applied to principal</small></article>
+      <article class="summary-card"><span>Interest received</span><strong id="interest-received">₹0</strong><small id="interest-rate">0.00% of contributions</small></article>
+      <article class="summary-card"><span>Members</span><strong id="member-count">0</strong><small>Active members</small></article>
+      <article class="summary-card"><span>Outstanding principal</span><strong id="loaned-fund">₹0</strong><small id="loan-count">0 active loans</small></article>
     </section>
-
-    <section class="habit-list-section" aria-labelledby="habits-heading">
-      <div class="section-heading">
-        <h2 id="habits-heading">Your habits</h2>
-        <span id="habit-count" class="habit-count">0 habits</span>
-      </div>
-      <div id="habit-list" class="habit-list" aria-live="polite"></div>
-      <p id="empty-state" class="empty-state">No habits yet. Add one above to get started.</p>
-    </section>
+    <nav class="tabs" aria-label="Ledger sections"><button class="tab is-active" type="button" data-tab="overview">Overview</button><button class="tab" type="button" data-tab="members">Members</button><button class="tab" type="button" data-tab="loans">Loans & payments</button></nav>
+    <section class="tab-panel is-active" data-panel="overview"><div class="section-heading"><div><p class="eyebrow">At a glance</p><h2>Recent activity</h2></div><div class="section-actions"><button class="secondary-button" type="button" data-admin-only data-open-modal="contribution-modal">Add contribution</button><button class="primary-button" type="button" data-admin-only data-open-modal="loan-modal">Record loan</button></div></div><div id="activity-list" class="activity-list"></div><p id="activity-empty" class="empty-state">No activity recorded yet.</p><div class="subsection-heading"><p class="eyebrow">Fund history</p><h2>Contributions</h2></div><div id="contribution-list" class="contribution-list"></div><p id="contribution-empty" class="empty-state">No contributions recorded yet.</p></section>
+    <section class="tab-panel" data-panel="members"><div class="section-heading"><div><p class="eyebrow">People</p><h2>Group members</h2></div><button class="primary-button" type="button" data-admin-only data-open-modal="member-modal">Add member</button></div><div id="member-list" class="member-list"></div><p id="member-empty" class="empty-state">No members added yet.</p></section>
+    <section class="tab-panel" data-panel="loans"><div class="section-heading"><div><p class="eyebrow">Outstanding balances</p><h2>Loans & payments</h2></div><button class="primary-button" type="button" data-admin-only data-open-modal="loan-modal">Record loan</button></div><div id="loan-list" class="loan-list"></div><p id="loan-empty" class="empty-state">No active loans recorded yet.</p><div id="loan-history-section" class="loan-history-section"><div class="subsection-heading"><p class="eyebrow">Past records</p><h2>Closed loan history</h2></div><div id="loan-history-list" class="loan-list"></div></div></section>
   </main>
+  <dialog id="member-modal" class="modal"><form id="member-form" class="modal-content"><button class="modal-close" type="button" data-close-modal="member-modal" aria-label="Close">×</button><p class="eyebrow">New member</p><h2>Add a group member</h2><label for="member-name">Full name</label><input id="member-name" type="text" maxlength="80" required><label for="member-phone">WhatsApp number</label><input id="member-phone" type="tel" placeholder="919876543210" required><button class="primary-button" data-admin-only type="submit">Add member</button></form></dialog>
+  <dialog id="contribution-modal" class="modal"><form id="contribution-form" class="modal-content"><button class="modal-close" type="button" data-close-modal="contribution-modal" aria-label="Close">×</button><p class="eyebrow">Fund deposit</p><h2>Add a contribution</h2><label for="contribution-member">Contributed by</label><select id="contribution-member" required></select><label for="contribution-amount">Amount (₹)</label><input id="contribution-amount" type="text" inputmode="numeric" pattern="[0-9]+" required><label for="contribution-date">Contribution date</label><input id="contribution-date" type="date" required><label for="contribution-note">Note</label><input id="contribution-note" type="text" maxlength="120" placeholder="Annual group deposit"><button class="primary-button" type="submit">Save contribution</button></form></dialog>
+  <dialog id="loan-modal" class="modal"><form id="loan-form" class="modal-content"><button class="modal-close" type="button" data-close-modal="loan-modal" aria-label="Close">×</button><p class="eyebrow">New loan</p><h2>Record a loan</h2><label for="loan-member">Member</label><select id="loan-member" required></select><label for="loan-amount">Principal amount (₹)</label><input id="loan-amount" type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required><label for="loan-date">Loan date</label><input id="loan-date" type="date" required><p class="form-note">2% interest is added immediately. Every 30 days, the next 2% is calculated on the principal still due after partial repayments.</p><button class="primary-button" type="submit">Save loan</button></form></dialog>
+  <dialog id="payment-modal" class="modal"><form id="payment-form" class="modal-content"><button class="modal-close" type="button" data-close-modal="payment-modal" aria-label="Close">×</button><p class="eyebrow">Loan payment</p><h2>Record a payment</h2><input id="payment-loan-id" type="hidden"><label for="payment-type">Payment goes to</label><select id="payment-type" required><option value="interest">Current interest</option><option value="principal">Principal</option></select><label for="payment-amount">Amount paid (₹)</label><input id="payment-amount" type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required><small id="payment-limit" class="payment-limit"></small><p id="payment-error" class="form-error" role="alert" hidden></p><label for="payment-date">Payment date</label><input id="payment-date" type="date" required><p class="form-note">Partial payments are allowed, but a payment cannot exceed the selected balance.</p><button class="primary-button" type="submit">Save payment</button></form></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <template id="habit-card-template">
-    <article class="habit-card">
-      <div class="habit-details">
-        <h3 class="habit-name"></h3>
-        <p class="streak"><strong class="streak-number">0</strong> day streak</p>
-      </div>
-      <div class="habit-actions">
-        <button class="complete-button" type="button" aria-pressed="false"></button>
-        <button class="delete-button" type="button" aria-label="Delete habit">Delete</button>
-      </div>
-    </article>
-  </template>
-
+  <script src="supabase-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

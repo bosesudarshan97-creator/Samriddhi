@@ -1,131 +1,180 @@
-const STORAGE_KEY = 'habit-tracker-habits';
+const STORAGE_KEY = 'circle-fund-ledger';
+const THEME_KEY = 'circle-fund-theme';
+const MONTHLY_RATE = 0.02;
+const SUPABASE_CONFIG = window.SUPABASE_CONFIG || { url: '', anonKey: '' };
+const supabaseClient = SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey) : null;
+const state = loadState();
+let currentUser = null;
+let currentRole = 'admin';
+const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
+const $ = (selector) => document.querySelector(selector);
 
-const habitForm = document.querySelector('#habit-form');
-const habitNameInput = document.querySelector('#habit-name');
-const habitList = document.querySelector('#habit-list');
-const emptyState = document.querySelector('#empty-state');
-const habitCount = document.querySelector('#habit-count');
-const todayLabel = document.querySelector('#today-label');
-const habitCardTemplate = document.querySelector('#habit-card-template');
+function emptyState() { return { members: [], loans: [], contributions: [] }; }
+function loadState() { try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (!saved || !Array.isArray(saved.members) || !Array.isArray(saved.loans)) return emptyState(); saved.contributions = Array.isArray(saved.contributions) ? saved.contributions.map((item) => ({ ...item, amount: Math.round(Number(item.amount) || 0) })) : []; return saved; } catch { return emptyState(); } }
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function applyAuthState() { const authenticated = Boolean(currentUser); document.body.classList.toggle('auth-enabled', Boolean(supabaseClient)); $('#auth-screen').hidden = !supabaseClient || authenticated; document.querySelector('.app-shell').hidden = Boolean(supabaseClient) && !authenticated; $('#user-badge').hidden = !authenticated; $('#sign-out').hidden = !authenticated; if (authenticated) { $('#user-badge').textContent = `${currentUser.email} · ${currentRole}`; document.querySelectorAll('[data-admin-only]').forEach((element) => { element.hidden = currentRole !== 'admin'; }); } }
+async function loadAuthState() { if (!supabaseClient) { applyAuthState(); return; } const { data: { session } } = await supabaseClient.auth.getSession(); await setSession(session); supabaseClient.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)); }
+async function setSession(session) { currentUser = session?.user || null; currentRole = 'member'; if (currentUser) { const { data } = await supabaseClient.from('profiles').select('role').eq('id', currentUser.id).maybeSingle(); currentRole = data?.role === 'admin' ? 'admin' : 'member'; } applyAuthState(); }
+function id() { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+function today() { return new Date().toISOString().slice(0, 10); }
+function formatDate(value) { return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${value}T00:00:00`)); }
+function formatMoney(value) { return money.format(Math.max(0, Number(value) || 0)); }
+function toPaise(value) { return Math.round((Number(value) || 0) * 100); }
+function fromPaise(value) { return value / 100; }
+function monthsElapsed(startDate, endDate = today()) { const start = new Date(`${startDate}T00:00:00`); const end = new Date(`${endDate}T00:00:00`); return Math.max(0, (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth()); }
+function loanTotals(loan) {
+	let principalDue = toPaise(loan.principal);
+	let interestDue = 0;
+	let interestCharged = 0;
+	const loanDate = new Date(`${loan.date}T00:00:00`);
+	const currentDate = new Date(`${today()}T00:00:00`);
+	const daysElapsed = Math.max(0, Math.floor((currentDate - loanDate) / (1000 * 60 * 60 * 24)));
+	const interestPeriods = loanDate <= currentDate ? 1 + Math.floor(daysElapsed / 30) : 0;
+	const payments = loan.payments
+		.map((payment) => ({ ...payment, dateValue: new Date(`${payment.date}T00:00:00`) }))
+		.sort((a, b) => a.dateValue - b.dateValue);
+	const events = [];
 
-let habits = loadHabits();
+	for (let period = 0; period < interestPeriods; period += 1) {
+		const interestDate = new Date(loanDate);
+		interestDate.setDate(interestDate.getDate() + period * 30);
+		events.push({ type: 'interest', date: interestDate });
+	}
 
-function getDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+	payments.forEach((payment) => events.push({ type: 'payment', date: payment.dateValue, amount: toPaise(payment.amount), paymentType: payment.type || 'auto' }));
+	events.sort((a, b) => a.date - b.date || (a.type === 'interest' ? -1 : 1));
+
+	events.forEach((event) => {
+		if (event.type === 'interest') {
+			// Every interest event uses the principal balance remaining at that time.
+			const interestAmount = Math.round(principalDue * MONTHLY_RATE);
+			interestDue += interestAmount;
+			interestCharged += interestAmount;
+			return;
+		}
+
+		if (event.paymentType === 'principal') {
+			principalDue = Math.max(0, principalDue - event.amount);
+		} else if (event.paymentType === 'auto') {
+			const interestPayment = Math.min(event.amount, interestDue);
+			interestDue -= interestPayment;
+			principalDue = Math.max(0, principalDue - (event.amount - interestPayment));
+		} else {
+			interestDue = Math.max(0, interestDue - event.amount);
+		}
+	});
+
+	return { interestDue: fromPaise(Math.max(0, interestDue)), principalDue: fromPaise(principalDue), totalDue: fromPaise(Math.max(0, interestDue + principalDue)), interestCharged: fromPaise(interestCharged) };
 }
+function isLoanClosed(loan) { return loanTotals(loan).totalDue <= 0.005; }
+function memberName(memberId) { return state.members.find((member) => member.id === memberId)?.name || 'Unknown member'; }
+function showToast(message) { const toast = $('#toast'); toast.textContent = message; toast.classList.add('is-visible'); window.setTimeout(() => toast.classList.remove('is-visible'), 2400); }
+function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character])); }
 
-function loadHabits() {
-  try {
-    const savedHabits = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!Array.isArray(savedHabits)) {
-      return [];
-    }
+function renderSummary() { const contributions = (state.contributions || []).reduce((total, item) => total + Number(item.amount), 0); const issued = state.loans.reduce((total, loan) => total + Number(loan.principal), 0); const principalReceived = state.loans.reduce((total, loan) => total + loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0); const interestReceived = state.loans.reduce((total, loan) => total + loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0); const interestRate = contributions > 0 ? (interestReceived / contributions) * 100 : 0; const repayments = principalReceived + interestReceived; const outstandingPrincipal = state.loans.reduce((total, loan) => total + loanTotals(loan).principalDue, 0); const activeLoans = state.loans.filter((loan) => loanTotals(loan).totalDue > 0).length; $('#available-fund').textContent = formatMoney(contributions + repayments - issued); $('#contribution-total').textContent = formatMoney(contributions); $('#principal-received').textContent = formatMoney(principalReceived); $('#interest-received').textContent = formatMoney(interestReceived); $('#interest-rate').textContent = `${interestRate.toFixed(2)}% of contributions`; $('#member-count').textContent = state.members.length; $('#loaned-fund').textContent = formatMoney(outstandingPrincipal); $('#loan-count').textContent = `${activeLoans} active loan${activeLoans === 1 ? '' : 's'}`; }
+function renderMembers() { const list = $('#member-list'); list.replaceChildren(); $('#member-empty').hidden = state.members.length > 0; state.members.forEach((member) => { const loans = state.loans.filter((loan) => loan.memberId === member.id); const row = document.createElement('article'); row.className = 'member-row'; row.innerHTML = `<div><strong>${escapeHtml(member.name)}</strong><small>${escapeHtml(member.phone)}</small></div><div class="member-row-actions"><span>${loans.length} loan${loans.length === 1 ? '' : 's'}</span><button class="text-button" type="button" data-whatsapp="${member.id}">WhatsApp</button><button class="text-button danger" type="button" data-admin-only data-delete-member="${member.id}">Remove</button></div>`; list.append(row); }); }
+function renderLoans() {
+	const list = $('#loan-list');
+	const historyList = $('#loan-history-list');
+	list.replaceChildren();
+	historyList.replaceChildren();
+	const activeLoans = state.loans.filter((loan) => !isLoanClosed(loan));
+	const closedLoans = state.loans.filter((loan) => isLoanClosed(loan));
+	$('#loan-empty').hidden = activeLoans.length > 0;
+	$('#loan-history-section').hidden = closedLoans.length === 0;
+	const groups = new Map();
 
-    return savedHabits.filter((habit) => (
-      habit && typeof habit.id === 'string' && typeof habit.name === 'string' && Array.isArray(habit.completedDates)
-    ));
-  } catch {
-    return [];
-  }
+	activeLoans.forEach((loan) => {
+		if (!groups.has(loan.memberId)) groups.set(loan.memberId, []);
+		groups.get(loan.memberId).push(loan);
+	});
+
+	function renderLoanGroups(target, sourceLoans) {
+		const groupedLoans = new Map();
+		sourceLoans.forEach((loan) => {
+			if (!groupedLoans.has(loan.memberId)) groupedLoans.set(loan.memberId, []);
+			groupedLoans.get(loan.memberId).push(loan);
+		});
+
+		groupedLoans.forEach((loans, memberId) => {
+		const group = document.createElement('section');
+		group.className = 'loan-member-group';
+		const memberDue = loans.reduce((total, loan) => total + loanTotals(loan).totalDue, 0);
+		const isHistory = target === historyList;
+		group.innerHTML = `<div class="loan-member-heading"><div><h3>${escapeHtml(memberName(memberId))}</h3><small>${loans.length} ${isHistory ? 'closed' : 'active'} loan${loans.length === 1 ? '' : 's'}</small></div><strong>${formatMoney(memberDue)} total due</strong></div>`;
+
+		loans.slice().reverse().forEach((loan) => {
+			const totals = loanTotals(loan);
+			const row = document.createElement('article');
+			if (isHistory) {
+				const closeDate = loan.payments.slice().sort((a, b) => b.date.localeCompare(a.date))[0]?.date || loan.date;
+				row.className = 'loan-row closed-history-row';
+				row.innerHTML = `<div class="loan-main"><strong>Loan taken ${formatDate(loan.date)}</strong><small>Closed ${formatDate(closeDate)}</small></div><div class="loan-figures"><span><small>Loan amount</small><strong>${formatMoney(loan.principal)}</strong></span><span><small>Total interest paid</small><strong class="due-value">${formatMoney(totals.interestCharged)}</strong></span></div><div class="row-actions"><span class="closed-label">Paid in full</span><button class="text-button" type="button" data-whatsapp-loan="${loan.id}">WhatsApp</button></div>`;
+				group.append(row);
+				return;
+			}
+			row.className = `loan-row${isLoanClosed(loan) ? ' is-closed' : ''}`;
+			row.innerHTML = `<div class="loan-main"><strong>Loan issued ${formatDate(loan.date)}${isLoanClosed(loan) ? ' · Closed' : ''}</strong><small>${loan.payments.length} payment${loan.payments.length === 1 ? '' : 's'}</small></div><div class="loan-figures"><span><small>Principal due</small><strong>${formatMoney(totals.principalDue)}</strong></span><span><small>Interest due</small><strong>${formatMoney(totals.interestDue)}</strong></span><span><small>Total due</small><strong class="due-value">${formatMoney(totals.totalDue)}</strong></span></div><div class="row-actions">${isLoanClosed(loan) ? '<span class="closed-label">Paid in full</span>' : `<button class="secondary-button" data-admin-only type="button" data-payment="${loan.id}">Record payment</button>`}<button class="text-button" type="button" data-whatsapp-loan="${loan.id}">WhatsApp</button></div>`;
+			group.append(row);
+		});
+		target.append(group);
+		});
+	}
+
+	renderLoanGroups(list, activeLoans);
+	renderLoanGroups(historyList, closedLoans);
 }
-
-function saveHabits() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
+function renderActivity() { const items = [...(state.contributions || []).map((item) => ({ date: item.date, label: `${item.memberId ? memberName(item.memberId) : 'Group fund'} contributed ${formatMoney(item.amount)}` })), ...state.loans.map((loan) => ({ date: loan.date, label: `${memberName(loan.memberId)} took a loan of ${formatMoney(loan.principal)}` })), ...state.loans.flatMap((loan) => loan.payments.map((payment) => ({ date: payment.date, label: `${memberName(loan.memberId)} paid ${formatMoney(payment.amount)}` })))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8); const list = $('#activity-list'); list.replaceChildren(); $('#activity-empty').hidden = items.length > 0; items.forEach((item) => { const row = document.createElement('div'); row.className = 'activity-row'; row.innerHTML = `<span class="activity-dot"></span><div><strong>${escapeHtml(item.label)}</strong><small>${formatDate(item.date)}</small></div>`; list.append(row); }); }
+function renderContributions() { const list = $('#contribution-list'); list.replaceChildren(); const contributions = state.contributions || []; $('#contribution-empty').hidden = contributions.length > 0; contributions.slice().reverse().forEach((item) => { const row = document.createElement('div'); row.className = 'contribution-row'; row.innerHTML = `<div><strong>${escapeHtml(item.memberId ? memberName(item.memberId) : 'Group fund')}</strong><small>${formatDate(item.date)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</small></div><strong class="contribution-amount">${formatMoney(item.amount)}</strong>`; list.append(row); }); }
+function updateMemberOptions() { const selects = [$('#loan-member'), $('#contribution-member')]; selects.forEach((select) => { select.replaceChildren(); state.members.forEach((member) => { const option = document.createElement('option'); option.value = member.id; option.textContent = member.name; select.append(option); }); }); }
+function render() { renderSummary(); renderMembers(); renderLoans(); renderActivity(); renderContributions(); updateMemberOptions(); }
+function updatePaymentLimit() {
+	const loan = state.loans.find((item) => item.id === $('#payment-loan-id').value);
+	const amountInput = $('#payment-amount');
+	if (!loan) return;
+	const totals = loanTotals(loan);
+	const type = $('#payment-type').value;
+	const limit = type === 'principal' ? totals.principalDue : totals.interestDue;
+	amountInput.max = String(limit);
+	amountInput.value = '';
+	$('#payment-limit').textContent = `Maximum allowed: ${formatMoney(limit)}`;
+	$('#payment-error').hidden = true;
+	amountInput.removeAttribute('aria-invalid');
+	}
+function validatePaymentAmount() {
+	const loan = state.loans.find((item) => item.id === $('#payment-loan-id').value);
+	if (!loan) return false;
+	const amount = Number($('#payment-amount').value);
+	const totals = loanTotals(loan);
+	const limit = $('#payment-type').value === 'principal' ? totals.principalDue : totals.interestDue;
+	const error = $('#payment-error');
+	if (amount > limit) {
+		error.textContent = `Amount is too high. Enter ${formatMoney(limit)} or less.`;
+		error.hidden = false;
+		$('#payment-amount').setAttribute('aria-invalid', 'true');
+		return false;
+	}
+	error.hidden = true;
+	$('#payment-amount').removeAttribute('aria-invalid');
+	return amount > 0;
 }
+function openModal(id) { const modal = $(`#${id}`); if (id === 'loan-modal') $('#loan-date').value = today(); if (id === 'payment-modal') { $('#payment-date').value = today(); $('#payment-type').value = 'interest'; updatePaymentLimit(); } if (id === 'contribution-modal') $('#contribution-date').value = today(); modal.showModal(); }
+function whatsappUrl(phone, message) { return `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`; }
+function memberMessage(memberId) { const member = state.members.find((item) => item.id === memberId); const due = state.loans.filter((loan) => loan.memberId === memberId).reduce((total, loan) => total + loanTotals(loan).totalDue, 0); return `Hello ${member.name}, your current Samriddhi Community Fund balance due is ${formatMoney(due)}.`; }
+function loanMessage(loan) { const totals = loanTotals(loan); return `Samriddhi Community Fund update for ${memberName(loan.memberId)}: total amount due is ${formatMoney(totals.totalDue)} (${formatMoney(totals.principalDue)} principal + ${formatMoney(totals.interestDue)} interest).`; }
 
-function getCurrentStreak(completedDates) {
-  const completed = new Set(completedDates);
-  const currentDate = new Date();
-  let streak = 0;
-
-  while (completed.has(getDateKey(currentDate))) {
-    streak += 1;
-    currentDate.setDate(currentDate.getDate() - 1);
-  }
-
-  return streak;
-}
-
-function renderHabits() {
-  habitList.replaceChildren();
-  emptyState.hidden = habits.length > 0;
-  habitCount.textContent = `${habits.length} habit${habits.length === 1 ? '' : 's'}`;
-
-  habits.forEach((habit) => {
-    const card = habitCardTemplate.content.cloneNode(true);
-    const cardElement = card.querySelector('.habit-card');
-    const completeButton = card.querySelector('.complete-button');
-    const todayKey = getDateKey();
-    const isComplete = habit.completedDates.includes(todayKey);
-
-    card.querySelector('.habit-name').textContent = habit.name;
-    card.querySelector('.streak-number').textContent = getCurrentStreak(habit.completedDates);
-    completeButton.textContent = isComplete ? 'Completed today' : 'Mark done today';
-    completeButton.classList.toggle('is-complete', isComplete);
-    completeButton.setAttribute('aria-pressed', String(isComplete));
-
-    completeButton.addEventListener('click', () => toggleToday(habit.id));
-    card.querySelector('.delete-button').addEventListener('click', () => deleteHabit(habit.id));
-    cardElement.dataset.habitId = habit.id;
-    habitList.append(card);
-  });
-}
-
-function addHabit(name) {
-  habits.push({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name,
-    completedDates: []
-  });
-  saveHabits();
-  renderHabits();
-}
-
-function toggleToday(habitId) {
-  const habit = habits.find((item) => item.id === habitId);
-  if (!habit) {
-    return;
-  }
-
-  const todayKey = getDateKey();
-  const dateIndex = habit.completedDates.indexOf(todayKey);
-
-  if (dateIndex === -1) {
-    habit.completedDates.push(todayKey);
-  } else {
-    habit.completedDates.splice(dateIndex, 1);
-  }
-
-  saveHabits();
-  renderHabits();
-}
-
-function deleteHabit(habitId) {
-  habits = habits.filter((habit) => habit.id !== habitId);
-  saveHabits();
-  renderHabits();
-}
-
-habitForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const name = habitNameInput.value.trim();
-
-  if (!name) {
-    return;
-  }
-
-  addHabit(name);
-  habitForm.reset();
-  habitNameInput.focus();
-});
-
-todayLabel.textContent = new Intl.DateTimeFormat(undefined, {
-  weekday: 'long',
-  month: 'long',
-  day: 'numeric'
-}).format(new Date());
-
-renderHabits();
+document.addEventListener('click', (event) => { const open = event.target.closest('[data-open-modal]'); const close = event.target.closest('[data-close-modal]'); const tab = event.target.closest('[data-tab]'); const payment = event.target.closest('[data-payment]'); const memberWhatsApp = event.target.closest('[data-whatsapp]'); const loanWhatsApp = event.target.closest('[data-whatsapp-loan]'); const remove = event.target.closest('[data-delete-member]'); if (open) openModal(open.dataset.openModal); if (close) $(`#${close.dataset.closeModal}`).close(); if (tab) { document.querySelectorAll('.tab, .tab-panel').forEach((element) => element.classList.remove('is-active')); tab.classList.add('is-active'); $(`[data-panel="${tab.dataset.tab}"]`).classList.add('is-active'); } if (payment) { $('#payment-loan-id').value = payment.dataset.payment; openModal('payment-modal'); } if (memberWhatsApp) { const member = state.members.find((item) => item.id === memberWhatsApp.dataset.whatsapp); window.open(whatsappUrl(member.phone, memberMessage(member.id)), '_blank', 'noopener'); } if (loanWhatsApp) { const loan = state.loans.find((item) => item.id === loanWhatsApp.dataset.whatsappLoan); const member = state.members.find((item) => item.id === loan.memberId); window.open(whatsappUrl(member.phone, loanMessage(loan)), '_blank', 'noopener'); } if (remove && window.confirm('Remove this member? Existing loan records will remain.')) { state.members = state.members.filter((member) => member.id !== remove.dataset.deleteMember); saveState(); render(); } });
+$('#auth-form').addEventListener('submit', async (event) => { event.preventDefault(); if (!supabaseClient) return; const { error } = await supabaseClient.auth.signInWithPassword({ email: $('#auth-email').value, password: $('#auth-password').value }); $('#auth-error').textContent = error?.message || ''; $('#auth-error').hidden = !error; });
+$('#auth-signup').addEventListener('click', async () => { if (!supabaseClient) return; const { error } = await supabaseClient.auth.signUp({ email: $('#auth-email').value, password: $('#auth-password').value }); $('#auth-error').textContent = error?.message || 'Check your email to confirm your account.'; $('#auth-error').hidden = false; });
+$('#sign-out').addEventListener('click', () => supabaseClient?.auth.signOut());
+$('#member-form').addEventListener('submit', (event) => { event.preventDefault(); state.members.push({ id: id(), name: $('#member-name').value.trim(), phone: $('#member-phone').value.trim() }); saveState(); render(); event.target.closest('dialog').close(); event.target.reset(); showToast('Member added'); });
+$('#contribution-form').addEventListener('submit', (event) => { event.preventDefault(); state.contributions = state.contributions || []; state.contributions.push({ id: id(), memberId: $('#contribution-member').value, amount: Math.round(Number($('#contribution-amount').value)), date: $('#contribution-date').value, note: $('#contribution-note').value.trim() }); saveState(); render(); event.target.closest('dialog').close(); event.target.reset(); showToast('Contribution recorded'); });
+$('#loan-form').addEventListener('submit', (event) => { event.preventDefault(); state.loans.push({ id: id(), memberId: $('#loan-member').value, principal: Number($('#loan-amount').value), date: $('#loan-date').value, payments: [] }); saveState(); render(); event.target.closest('dialog').close(); event.target.reset(); showToast('Loan recorded'); });
+$('#payment-type').addEventListener('change', updatePaymentLimit);
+$('#payment-amount').addEventListener('input', validatePaymentAmount);
+$('#payment-form').addEventListener('submit', (event) => { event.preventDefault(); const loan = state.loans.find((item) => item.id === $('#payment-loan-id').value); if (!loan || !validatePaymentAmount()) return; const amount = Number($('#payment-amount').value); const type = $('#payment-type').value; loan.payments.push({ id: id(), amount, type, date: $('#payment-date').value }); saveState(); render(); event.target.closest('dialog').close(); event.target.reset(); showToast('Payment recorded'); });
+function applyTheme(theme) { document.documentElement.dataset.theme = theme; const dark = theme === 'dark'; $('#theme-toggle').textContent = dark ? 'Light mode' : 'Dark mode'; $('#theme-toggle').setAttribute('aria-pressed', String(dark)); }
+$('#theme-toggle').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem(THEME_KEY, next); applyTheme(next); });
+applyTheme(localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light');
+render();
+loadAuthState();

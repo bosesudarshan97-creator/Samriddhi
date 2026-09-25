@@ -1,0 +1,21 @@
+-- Run this in Supabase SQL Editor before connecting the shared version.
+create table public.members (id uuid primary key default gen_random_uuid(), name text not null, phone text not null, active boolean not null default true, created_at timestamptz not null default now());
+create table public.loans (id uuid primary key default gen_random_uuid(), member_id uuid not null references public.members(id), principal numeric(12, 2) not null check (principal > 0), loan_date date not null default current_date, created_at timestamptz not null default now());
+create table public.payments (id uuid primary key default gen_random_uuid(), loan_id uuid not null references public.loans(id), amount numeric(12, 2) not null check (amount > 0), payment_date date not null default current_date, created_at timestamptz not null default now());
+create table public.contributions (id uuid primary key default gen_random_uuid(), member_id uuid references public.members(id), amount numeric(12, 2) not null check (amount > 0), contribution_date date not null default current_date, note text, created_at timestamptz not null default now());
+create table public.profiles (id uuid primary key references auth.users(id) on delete cascade, role text not null default 'member' check (role in ('admin', 'member')), created_at timestamptz not null default now());
+alter table public.members enable row level security;
+alter table public.loans enable row level security;
+alter table public.payments enable row level security;
+alter table public.contributions enable row level security;
+alter table public.profiles enable row level security;
+create or replace function public.is_admin() returns boolean language sql stable security definer set search_path = public as $$ select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin'); $$;
+create policy "authenticated users can read members" on public.members for select to authenticated using (true);
+create policy "admins can manage members" on public.members for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "authenticated users can read loans" on public.loans for select to authenticated using (true);
+create policy "admins can manage loans" on public.loans for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "authenticated users can read payments" on public.payments for select to authenticated using (true);
+create policy "admins can manage payments" on public.payments for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "authenticated users can read contributions" on public.contributions for select to authenticated using (true);
+create policy "admins can manage contributions" on public.contributions for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "authenticated users can read profiles" on public.profiles for select to authenticated using (true);
