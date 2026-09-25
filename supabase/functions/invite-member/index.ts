@@ -41,7 +41,7 @@ Deno.serve(async (request) => {
     return json({ error: profileInsertError.message }, 400);
   }
 
-  const { error: memberInsertError } = await adminClient.from('members').insert({ name, phone, active: true });
+  const { error: memberInsertError } = await adminClient.from('members').insert({ user_id: invited.user.id, name, phone, active: true });
   if (memberInsertError) {
     await adminClient.from('profiles').delete().eq('id', invited.user.id);
     await adminClient.auth.admin.deleteUser(invited.user.id);
