@@ -76,6 +76,19 @@ function fitSheetColumns(sheet, widths) {
   sheet['!cols'] = widths.map((width) => ({ wch: width }));
 }
 
+function uniqueSheetName(value, usedNames) {
+  const baseName = String(value || 'Member').replace(/[\\/?*:[\]]/g, ' ').trim().slice(0, 31) || 'Member';
+  let name = baseName;
+  let suffix = 2;
+  while (usedNames.has(name.toLowerCase())) {
+    const suffixText = ` (${suffix})`;
+    name = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
+    suffix += 1;
+  }
+  usedNames.add(name.toLowerCase());
+  return name;
+}
+
 function downloadFundReportCsv() {
   if (!window.XLSX) {
     showToast('Excel export could not load. Refresh and try again.');
@@ -113,28 +126,52 @@ function downloadFundReportCsv() {
   contributionRows.slice(1).forEach((_, index) => { const cell = `D${index + 2}`; if (contributionSheet[cell]) contributionSheet[cell].z = '₹#,##0.00'; });
   XLSX.utils.book_append_sheet(workbook, contributionSheet, 'Contributions');
 
-  const loanRows = [['Member', 'Loan date', 'Principal issued', 'Principal repaid', 'Interest paid', 'Principal due', 'Interest due', 'Total due']];
-  state.loans.slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).forEach((loan) => {
-    const totals = loanTotals(loan);
-    const principalPaid = loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
-    const interestPaid = loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
-    loanRows.push([memberName(loan.memberId), formatDate(loan.date), Number(loan.principal), principalPaid, interestPaid, totals.principalDue, totals.interestDue, totals.totalDue]);
-  });
-  const loanSheet = XLSX.utils.aoa_to_sheet(loanRows);
-  fitSheetColumns(loanSheet, [28, 16, 20, 20, 18, 18, 18, 18]);
-  loanSheet['!autofilter'] = { ref: `A1:H${Math.max(1, loanRows.length)}` };
-  loanRows.slice(1).forEach((_, index) => ['C', 'D', 'E', 'F', 'G', 'H'].forEach((column) => { const cell = `${column}${index + 2}`; if (loanSheet[cell]) loanSheet[cell].z = '₹#,##0.00'; }));
-  XLSX.utils.book_append_sheet(workbook, loanSheet, 'Loans');
+  const borrowerIds = [...new Set(state.loans.map((loan) => loan.memberId))];
+  const usedSheetNames = new Set(['summary', 'contributions']);
+  borrowerIds.forEach((memberId) => {
+    const memberLoans = state.loans.filter((loan) => loan.memberId === memberId).sort((a, b) => recordTimestamp(a) - recordTimestamp(b));
+    const memberContributions = (state.contributions || []).filter((item) => item.memberId === memberId).reduce((sum, item) => sum + Number(item.amount), 0);
+    const memberBorrowed = memberLoans.reduce((sum, loan) => sum + Number(loan.principal), 0);
+    const memberPrincipalPaid = memberLoans.reduce((sum, loan) => sum + loan.payments.filter((payment) => payment.type === 'principal').reduce((total, payment) => total + Number(payment.amount), 0), 0);
+    const memberInterestPaid = memberLoans.reduce((sum, loan) => sum + loan.payments.filter((payment) => payment.type !== 'principal').reduce((total, payment) => total + Number(payment.amount), 0), 0);
+    const rows = [
+      [`MEMBER REPORT: ${memberName(memberId)}`],
+      ['Member contributions', memberContributions],
+      ['Total principal borrowed', memberBorrowed],
+      ['Principal repaid', memberPrincipalPaid],
+      ['Interest paid', memberInterestPaid],
+      [],
+      ['LOAN SUMMARY'],
+      ['Loan date', 'Principal issued', 'Principal repaid', 'Interest paid', 'Principal due', 'Interest due', 'Total due'],
+    ];
+    memberLoans.forEach((loan) => {
+      const totals = loanTotals(loan);
+      const principalPaid = loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
+      const interestPaid = loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
+      rows.push([formatDate(loan.date), Number(loan.principal), principalPaid, interestPaid, totals.principalDue, totals.interestDue, totals.totalDue]);
+    });
+    rows.push([], ['PAYMENT HISTORY'], ['Payment date / time', 'Loan date', 'Payment type', 'Amount']);
+    const payments = memberLoans.flatMap((loan) => loan.payments.map((payment) => ({ ...payment, loanDate: loan.date }))).sort((a, b) => recordTimestamp(a) - recordTimestamp(b));
+    payments.forEach((payment) => rows.push([
+      formatDateTime(payment.createdAt || `${payment.date}T00:00:00`), formatDate(payment.loanDate), payment.type === 'principal' ? 'Principal repayment' : 'Interest payment', Number(payment.amount),
+    ]));
+    if (!payments.length) rows.push(['No payments recorded.']);
 
-  const paymentRows = [['Payment date / time', 'Member', 'Loan date', 'Payment type', 'Amount']];
-  state.loans.forEach((loan) => loan.payments.slice().sort((a, b) => recordTimestamp(a) - recordTimestamp(b)).forEach((payment) => paymentRows.push([
-    formatDateTime(payment.createdAt || `${payment.date}T00:00:00`), memberName(loan.memberId), formatDate(loan.date), payment.type === 'principal' ? 'Principal repayment' : 'Interest payment', Number(payment.amount),
-  ])));
-  const paymentSheet = XLSX.utils.aoa_to_sheet(paymentRows);
-  fitSheetColumns(paymentSheet, [24, 28, 16, 24, 18]);
-  paymentSheet['!autofilter'] = { ref: `A1:E${Math.max(1, paymentRows.length)}` };
-  paymentRows.slice(1).forEach((_, index) => { const cell = `E${index + 2}`; if (paymentSheet[cell]) paymentSheet[cell].z = '₹#,##0.00'; });
-  XLSX.utils.book_append_sheet(workbook, paymentSheet, 'Payments');
+    const memberSheet = XLSX.utils.aoa_to_sheet(rows);
+    fitSheetColumns(memberSheet, [25, 20, 23, 18, 18, 18, 18]);
+    const summaryAmountCells = ['B2', 'B3', 'B4', 'B5'];
+    summaryAmountCells.forEach((cell) => { if (memberSheet[cell]) memberSheet[cell].z = '₹#,##0.00'; });
+    const paymentHeaderIndex = rows.findIndex((row) => row[0] === 'Payment date / time');
+    const loanHeaderIndex = rows.findIndex((row) => row[0] === 'Loan date' && row[1] === 'Principal issued');
+    for (let index = loanHeaderIndex + 1; index < paymentHeaderIndex - 1; index += 1) {
+      ['B', 'C', 'D', 'E', 'F', 'G'].forEach((column) => { const cell = `${column}${index + 1}`; if (memberSheet[cell]) memberSheet[cell].z = '₹#,##0.00'; });
+    }
+    for (let index = paymentHeaderIndex + 1; index < rows.length; index += 1) {
+      const cell = `D${index + 1}`;
+      if (memberSheet[cell] && typeof memberSheet[cell].v === 'number') memberSheet[cell].z = '₹#,##0.00';
+    }
+    XLSX.utils.book_append_sheet(workbook, memberSheet, uniqueSheetName(memberName(memberId), usedSheetNames));
+  });
   XLSX.writeFile(workbook, `samriddhi-fund-report-${today()}.xlsx`);
 }
 
