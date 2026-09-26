@@ -41,7 +41,7 @@ Deno.serve(async (request) => {
   }
 
   const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-    data: { full_name: name },
+    data: { full_name: name, phone },
   });
   if (inviteError) return json({ error: inviteError.message }, 400);
 
@@ -51,17 +51,7 @@ Deno.serve(async (request) => {
     return json({ error: profileInsertError.message }, 400);
   }
 
-  const memberMutation = existingMember
-    ? await adminClient.from('members').update({ user_id: invited.user.id, email, name, phone, active: true }).eq('id', existingMember.id)
-    : await adminClient.from('members').insert({ user_id: invited.user.id, email, name, phone, active: true });
-  const memberInsertError = memberMutation.error;
-  if (memberInsertError) {
-    await adminClient.from('profiles').delete().eq('id', invited.user.id);
-    await adminClient.auth.admin.deleteUser(invited.user.id);
-    return json({ error: memberInsertError.message }, 400);
-  }
-
-  return json({ success: true });
+  return json({ success: true, memberCreated: false, message: 'Invitation sent. The member record will be created after the invitee accepts and signs in.' });
 });
 
 function json(body: Record<string, unknown>, status = 200) {
