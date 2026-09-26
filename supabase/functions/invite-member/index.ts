@@ -30,6 +30,16 @@ Deno.serve(async (request) => {
   const email = String(body.email || '').trim().toLowerCase();
   if (!name || !phone || !email) return json({ error: 'Name, phone, and email are required' }, 400);
 
+  const { data: existingMember, error: memberLookupError } = await adminClient
+    .from('members')
+    .select('id, user_id')
+    .ilike('email', email)
+    .maybeSingle();
+  if (memberLookupError) return json({ error: memberLookupError.message }, 400);
+  if (existingMember?.user_id) {
+    return json({ error: 'This email already belongs to a linked member account. Remove or update that account before inviting it again.' }, 409);
+  }
+
   const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
     data: { full_name: name },
   });
@@ -41,7 +51,10 @@ Deno.serve(async (request) => {
     return json({ error: profileInsertError.message }, 400);
   }
 
-  const { error: memberInsertError } = await adminClient.from('members').insert({ user_id: invited.user.id, email, name, phone, active: true });
+  const memberMutation = existingMember
+    ? await adminClient.from('members').update({ user_id: invited.user.id, email, name, phone, active: true }).eq('id', existingMember.id)
+    : await adminClient.from('members').insert({ user_id: invited.user.id, email, name, phone, active: true });
+  const memberInsertError = memberMutation.error;
   if (memberInsertError) {
     await adminClient.from('profiles').delete().eq('id', invited.user.id);
     await adminClient.auth.admin.deleteUser(invited.user.id);
