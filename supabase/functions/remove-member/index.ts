@@ -34,6 +34,7 @@ Deno.serve(async (request) => {
   const { error: memberUpdateError } = await adminClient.from('members').update({ active: false }).eq('id', memberId);
   if (memberUpdateError) return json({ error: memberUpdateError.message }, 400);
   if (member.user_id) {
+    await adminClient.from('profiles').delete().eq('id', member.user_id);
     const { error: deleteUserError } = await adminClient.auth.admin.deleteUser(member.user_id);
     if (deleteUserError) return json({ error: deleteUserError.message }, 400);
   }

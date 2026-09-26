@@ -1,7 +1,9 @@
 -- Run this in Supabase SQL Editor before connecting the shared version.
 create table if not exists public.members (id uuid primary key default gen_random_uuid(), name text not null, phone text not null, active boolean not null default true, created_at timestamptz not null default now());
 alter table public.members add column if not exists user_id uuid references auth.users(id) on delete set null;
+alter table public.members add column if not exists email text;
 create unique index if not exists members_user_id_key on public.members(user_id) where user_id is not null;
+create unique index if not exists members_email_key on public.members(lower(email)) where email is not null;
 create table if not exists public.loans (id uuid primary key default gen_random_uuid(), member_id uuid not null references public.members(id), principal numeric(12, 2) not null check (principal > 0), loan_date date not null default current_date, created_at timestamptz not null default now());
 create table if not exists public.payments (id uuid primary key default gen_random_uuid(), loan_id uuid not null references public.loans(id), amount numeric(12, 2) not null check (amount > 0), payment_type text not null default 'auto' check (payment_type in ('interest', 'principal', 'auto')), payment_date date not null default current_date, created_at timestamptz not null default now());
 alter table public.payments add column if not exists payment_type text not null default 'auto';
