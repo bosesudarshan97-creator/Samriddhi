@@ -72,31 +72,70 @@ function buildWhatsAppSummary() {
   ].join('\n');
 }
 
-function csvCell(value) {
-  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+function fitSheetColumns(sheet, widths) {
+  sheet['!cols'] = widths.map((width) => ({ wch: width }));
 }
 
 function downloadFundReportCsv() {
-  const rows = [['Record type', 'Date/time', 'Member', 'Details', 'Amount', 'Principal', 'Interest', 'Principal due', 'Interest due', 'Note']];
-  (state.contributions || []).forEach((item) => rows.push([
-    'Contribution', formatDateTime(item.createdAt || `${item.date}T00:00:00`), item.memberId ? memberName(item.memberId) : 'Group fund', 'Contribution received', Number(item.amount).toFixed(2), '', '', '', '', item.note || '',
+  if (!window.XLSX) {
+    showToast('Excel export could not load. Refresh and try again.');
+    return;
+  }
+
+  const metrics = fundReportMetrics();
+  const workbook = XLSX.utils.book_new();
+  workbook.Props = { Title: 'Samriddhi Community Fund Report', Subject: 'Fund contributions, loans, and repayments' };
+
+  const summarySheet = XLSX.utils.aoa_to_sheet([
+    ['SAMRIDDHI COMMUNITY FUND'],
+    ['Report generated', formatDateTime(new Date().toISOString())],
+    [],
+    ['FUND SUMMARY', 'AMOUNT'],
+    ['Total contributions', metrics.contributionTotal],
+    ['Interest income received', metrics.interestReceived],
+    ['Available amount', metrics.availableFund],
+    ['Total principal loaned', metrics.loansIssued],
+    ['Principal repaid', metrics.principalRepaid],
+    ['Outstanding principal', metrics.outstandingPrincipal],
+    ['Total outstanding including interest', metrics.totalDue],
+  ]);
+  fitSheetColumns(summarySheet, [42, 24]);
+  ['B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11'].forEach((cell) => { if (summarySheet[cell]) summarySheet[cell].z = '₹#,##0.00'; });
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+  const contributionRows = [['Date / time', 'Member', 'Note', 'Contribution amount']];
+  (state.contributions || []).slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).forEach((item) => contributionRows.push([
+    formatDateTime(item.createdAt || `${item.date}T00:00:00`), item.memberId ? memberName(item.memberId) : 'Group fund', item.note || '', Number(item.amount),
   ]));
-  state.loans.forEach((loan) => {
+  const contributionSheet = XLSX.utils.aoa_to_sheet(contributionRows);
+  fitSheetColumns(contributionSheet, [24, 28, 40, 22]);
+  contributionSheet['!autofilter'] = { ref: `A1:D${Math.max(1, contributionRows.length)}` };
+  contributionRows.slice(1).forEach((_, index) => { const cell = `D${index + 2}`; if (contributionSheet[cell]) contributionSheet[cell].z = '₹#,##0.00'; });
+  XLSX.utils.book_append_sheet(workbook, contributionSheet, 'Contributions');
+
+  const loanRows = [['Member', 'Loan date', 'Principal issued', 'Principal repaid', 'Interest paid', 'Principal due', 'Interest due', 'Total due']];
+  state.loans.slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).forEach((loan) => {
     const totals = loanTotals(loan);
     const principalPaid = loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
     const interestPaid = loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0);
-    rows.push(['Loan', formatDateTime(loan.createdAt || `${loan.date}T00:00:00`), memberName(loan.memberId), 'Loan issued', Number(loan.principal).toFixed(2), principalPaid.toFixed(2), interestPaid.toFixed(2), totals.principalDue.toFixed(2), totals.interestDue.toFixed(2), '']);
-    loan.payments.forEach((payment) => rows.push([
-      'Payment', formatDateTime(payment.createdAt || `${payment.date}T00:00:00`), memberName(loan.memberId), payment.type === 'principal' ? 'Principal repayment' : 'Interest payment', Number(payment.amount).toFixed(2), payment.type === 'principal' ? Number(payment.amount).toFixed(2) : '', payment.type === 'principal' ? '' : Number(payment.amount).toFixed(2), '', '', `Loan date ${loan.date}`,
-    ]));
+    loanRows.push([memberName(loan.memberId), formatDate(loan.date), Number(loan.principal), principalPaid, interestPaid, totals.principalDue, totals.interestDue, totals.totalDue]);
   });
-  const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`;
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `samriddhi-fund-report-${today()}.csv`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const loanSheet = XLSX.utils.aoa_to_sheet(loanRows);
+  fitSheetColumns(loanSheet, [28, 16, 20, 20, 18, 18, 18, 18]);
+  loanSheet['!autofilter'] = { ref: `A1:H${Math.max(1, loanRows.length)}` };
+  loanRows.slice(1).forEach((_, index) => ['C', 'D', 'E', 'F', 'G', 'H'].forEach((column) => { const cell = `${column}${index + 2}`; if (loanSheet[cell]) loanSheet[cell].z = '₹#,##0.00'; }));
+  XLSX.utils.book_append_sheet(workbook, loanSheet, 'Loans');
+
+  const paymentRows = [['Payment date / time', 'Member', 'Loan date', 'Payment type', 'Amount']];
+  state.loans.forEach((loan) => loan.payments.slice().sort((a, b) => recordTimestamp(a) - recordTimestamp(b)).forEach((payment) => paymentRows.push([
+    formatDateTime(payment.createdAt || `${payment.date}T00:00:00`), memberName(loan.memberId), formatDate(loan.date), payment.type === 'principal' ? 'Principal repayment' : 'Interest payment', Number(payment.amount),
+  ])));
+  const paymentSheet = XLSX.utils.aoa_to_sheet(paymentRows);
+  fitSheetColumns(paymentSheet, [24, 28, 16, 24, 18]);
+  paymentSheet['!autofilter'] = { ref: `A1:E${Math.max(1, paymentRows.length)}` };
+  paymentRows.slice(1).forEach((_, index) => { const cell = `E${index + 2}`; if (paymentSheet[cell]) paymentSheet[cell].z = '₹#,##0.00'; });
+  XLSX.utils.book_append_sheet(workbook, paymentSheet, 'Payments');
+  XLSX.writeFile(workbook, `samriddhi-fund-report-${today()}.xlsx`);
 }
 
 $('#fund-report-whatsapp').addEventListener('click', () => {
