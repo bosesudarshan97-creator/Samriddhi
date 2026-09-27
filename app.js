@@ -260,6 +260,70 @@ function openModal(id) { const modal = $(`#${id}`); if (id === 'loan-modal') { $
 function whatsappUrl(phone, message) { return `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`; }
 function memberMessage(memberId) { const member = state.members.find((item) => item.id === memberId); const due = state.loans.filter((loan) => loan.memberId === memberId).reduce((total, loan) => total + loanTotals(loan).totalDue, 0); return `Hello ${member.name}, your current Samriddhi Community Fund balance due is ${formatMoney(due)}.`; }
 function loanMessage(loan) { const totals = loanTotals(loan); return `Samriddhi Community Fund update for ${memberName(loan.memberId)}: total amount due is ${formatMoney(totals.totalDue)} (${formatMoney(totals.principalDue)} principal + ${formatMoney(totals.interestDue)} interest).`; }
+document.addEventListener('click', async (event) => {
+	const target = event.target;
+	const open = target.closest('[data-open-modal]');
+	const close = target.closest('[data-close-modal]');
+	const tab = target.closest('[data-tab]');
+	const payment = target.closest('[data-payment]');
+	const historyToggle = target.closest('[data-payment-history]');
+	const shareReport = target.closest('#share-fund-report');
+	const memberWhatsApp = target.closest('[data-whatsapp]');
+	const loanWhatsApp = target.closest('[data-whatsapp-loan]');
+	const edit = target.closest('[data-edit-member]');
+	const remove = target.closest('[data-delete-member]');
+	if (open) openModal(open.dataset.openModal);
+	if (close) $(`#${close.dataset.closeModal}`).close();
+	if (tab) {
+		document.querySelectorAll('.tab, .tab-panel').forEach((element) => element.classList.remove('is-active'));
+		tab.classList.add('is-active');
+		$(`[data-panel="${tab.dataset.tab}"]`).classList.add('is-active');
+	}
+	if (payment) {
+		$('#payment-loan-id').value = payment.dataset.payment;
+		openModal('payment-modal');
+	}
+	if (historyToggle) {
+		const panel = $(`[data-payment-history-panel="${historyToggle.dataset.paymentHistory}"]`);
+		const expanded = historyToggle.getAttribute('aria-expanded') === 'true';
+		historyToggle.setAttribute('aria-expanded', String(!expanded));
+		panel.hidden = expanded;
+	}
+	if (shareReport) {
+		renderFundReportPreview();
+		$('#fund-report-modal').showModal();
+	}
+	if (edit) {
+		const member = state.members.find((item) => item.id === edit.dataset.editMember);
+		if (member) {
+			$('#edit-member-id').value = member.id;
+			$('#edit-member-name').value = member.name;
+			$('#edit-member-phone').value = member.phone === 'Not provided' ? '' : member.phone;
+			openModal('edit-member-modal');
+		}
+	}
+	if (memberWhatsApp) {
+		const member = state.members.find((item) => item.id === memberWhatsApp.dataset.whatsapp);
+		if (member) window.open(whatsappUrl(member.phone, memberMessage(member.id)), '_blank', 'noopener');
+	}
+	if (loanWhatsApp) {
+		const loan = state.loans.find((item) => item.id === loanWhatsApp.dataset.whatsappLoan);
+		const member = state.members.find((item) => item.id === loan?.memberId);
+		if (loan && member) window.open(whatsappUrl(member.phone, loanMessage(loan)), '_blank', 'noopener');
+	}
+	if (remove && window.confirm('Remove this member? Existing loan records will remain.')) {
+		try {
+			if (supabaseClient) await removeMember(remove.dataset.deleteMember);
+			else {
+				state.members = state.members.filter((member) => member.id !== remove.dataset.deleteMember);
+				saveLocalState();
+				render();
+			}
+		} catch (error) {
+			showDataError(error);
+		}
+	}
+});
 function buildFundReport() { const contributions = state.contributions || []; const totalContributions = contributions.reduce((total, item) => total + Number(item.amount), 0); const loansIssued = state.loans.reduce((total, loan) => total + Number(loan.principal), 0); const principalReceived = state.loans.reduce((total, loan) => total + loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0); const interestReceived = state.loans.reduce((total, loan) => total + loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0); const outstandingPrincipal = state.loans.reduce((total, loan) => total + loanTotals(loan).principalDue, 0); const currentDue = state.loans.reduce((total, loan) => total + loanTotals(loan).totalDue, 0); const availableFund = totalContributions + principalReceived + interestReceived - loansIssued; const lines = [`SAMRIDDHI COMMUNITY FUND`, `Report: ${formatDateTime(new Date().toISOString())}`, '', `FUND SUMMARY`, `Total contributions: ${formatMoney(totalContributions)}`, `Loans issued: ${formatMoney(loansIssued)}`, `Principal repaid: ${formatMoney(principalReceived)}`, `Interest received: ${formatMoney(interestReceived)}`, `Outstanding principal: ${formatMoney(outstandingPrincipal)}`, `Total amount due (incl. interest): ${formatMoney(currentDue)}`, `Available fund: ${formatMoney(availableFund)}`, '', `CONTRIBUTIONS`]; const orderedContributions = contributions.slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)); if (orderedContributions.length) orderedContributions.forEach((item) => lines.push(`${item.memberId ? memberName(item.memberId) : 'Group fund'}: ${formatMoney(item.amount)} · ${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}${item.note ? ` · ${item.note}` : ''}`)); else lines.push('No contributions recorded.'); lines.push('', 'LOAN RECORDS'); const orderedLoans = state.loans.slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)); if (orderedLoans.length) orderedLoans.forEach((loan) => { const totals = loanTotals(loan); const loanPrincipalPaid = loan.payments.filter((payment) => payment.type === 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0); const loanInterestPaid = loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0); lines.push(`${memberName(loan.memberId)} · Loan ${formatMoney(loan.principal)} · ${formatDate(loan.date)}`); lines.push(`Principal repaid ${formatMoney(loanPrincipalPaid)} · Interest paid ${formatMoney(loanInterestPaid)} · Principal due ${formatMoney(totals.principalDue)} · Interest due ${formatMoney(totals.interestDue)}`); loan.payments.slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).forEach((payment) => lines.push(`  ${payment.type === 'principal' ? 'Principal' : 'Interest'} payment ${formatMoney(payment.amount)} · ${formatDateTime(payment.createdAt || `${payment.date}T00:00:00`)}`)); }); else lines.push('No loans recorded.'); return lines.join('\n'); }
 
 document.addEventListener('click', async (event) => { const approve = event.target.closest('[data-approve-application]'); const reject = event.target.closest('[data-reject-application]'); if (approve) { const application = state.loanApplications.find((item) => item.id === approve.dataset.approveApplication); if (!application || !window.confirm(`Approve ${memberName(application.memberId)}’s ${formatMoney(application.amount)} application and issue the loan?`)) return; approve.disabled = true; try { await decideLoanApplication(application.id, 'approve'); showToast('Application approved and loan issued'); } catch (error) { showDataError(error); approve.disabled = false; } } if (reject) { const application = state.loanApplications.find((item) => item.id === reject.dataset.rejectApplication); if (!application || !window.confirm(`Reject ${memberName(application.memberId)}’s loan application?`)) return; reject.disabled = true; try { await decideLoanApplication(application.id, 'reject'); showToast('Application rejected'); } catch (error) { showDataError(error); reject.disabled = false; } } });
