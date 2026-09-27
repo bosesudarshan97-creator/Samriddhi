@@ -222,10 +222,47 @@ function renderLoanApplications() {
 		list.append(row);
 	});
 }
+function renderAnalyticsChart(container, entries, formatter, barClass) {
+	container.replaceChildren();
+	const maxValue = Math.max(0, ...entries.map((entry) => entry.value));
+	entries.forEach((entry) => {
+		const row = document.createElement('div');
+		row.className = 'analytics-row';
+		const label = document.createElement('div');
+		label.className = 'analytics-member';
+		label.textContent = entry.name;
+		const track = document.createElement('div');
+		track.className = 'analytics-track';
+		const bar = document.createElement('div');
+		bar.className = `analytics-bar ${barClass}`;
+		bar.style.width = `${maxValue > 0 ? Math.max(entry.value > 0 ? 1 : 0, (entry.value / maxValue) * 100) : 0}%`;
+		bar.setAttribute('aria-hidden', 'true');
+		track.append(bar);
+		const value = document.createElement('strong');
+		value.className = 'analytics-value';
+		value.textContent = formatter(entry.value);
+		row.append(label, track, value);
+		container.append(row);
+	});
+}
+function renderAnalytics() {
+	const members = state.members.filter((member) => member.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name));
+	const groupContributions = (state.contributions || []).reduce((total, item) => total + Number(item.amount), 0);
+	$('#analytics-empty').hidden = members.length > 0;
+	const loansToGroupPercent = members.map((member) => ({ name: member.name, value: groupContributions > 0 ? (memberTotalBorrowed(member.id) / groupContributions) * 100 : 0 }));
+	const interestByMember = members.map((member) => ({
+		name: member.name,
+		value: state.loans.filter((loan) => loan.memberId === member.id).reduce((total, loan) => total + loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0),
+	}));
+	const activeLoansByMember = members.map((member) => ({ name: member.name, value: state.loans.filter((loan) => loan.memberId === member.id && loanTotals(loan).totalDue > 0.005).length }));
+	renderAnalyticsChart($('#analytics-loan-ratio'), loansToGroupPercent, (value) => `${value.toFixed(1)}%`, 'analytics-bar--ratio');
+	renderAnalyticsChart($('#analytics-interest'), interestByMember, formatMoney, 'analytics-bar--interest');
+	renderAnalyticsChart($('#analytics-active-loans'), activeLoansByMember, (value) => `${value}`, 'analytics-bar--count');
+}
 function renderActivity() { const items = [...(state.contributions || []).map((item) => ({ date: item.date, createdAt: item.createdAt, label: `${item.memberId ? memberName(item.memberId) : 'Group fund'} contributed ${formatMoney(item.amount)}` })), ...state.loans.map((loan) => ({ date: loan.date, createdAt: loan.createdAt, label: `${memberName(loan.memberId)} took a loan of ${formatMoney(loan.principal)}` })), ...state.loans.flatMap((loan) => loan.payments.map((payment) => ({ date: payment.date, createdAt: payment.createdAt, label: `${memberName(loan.memberId)} paid ${formatMoney(payment.amount)}` })))].sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).slice(0, 8); const list = $('#activity-list'); list.replaceChildren(); $('#activity-empty').hidden = items.length > 0; items.forEach((item) => { const row = document.createElement('div'); row.className = 'activity-row'; row.innerHTML = `<span class="activity-dot"></span><div><strong>${escapeHtml(item.label)}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}</small></div>`; list.append(row); }); }
 function renderContributions() { const list = $('#contribution-list'); list.replaceChildren(); const contributions = (state.contributions || []).slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)); $('#contribution-empty').hidden = contributions.length > 0; contributions.forEach((item) => { const row = document.createElement('div'); row.className = 'contribution-row'; row.innerHTML = `<div><strong>${escapeHtml(item.memberId ? memberName(item.memberId) : 'Group fund')}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</small></div><strong class="contribution-amount">${formatMoney(item.amount)}</strong>`; list.append(row); }); }
 function updateMemberOptions() { const selects = [$('#loan-member'), $('#contribution-member')]; selects.forEach((select) => { const selectedValue = select.value; select.replaceChildren(); state.members.filter((member) => member.active !== false).forEach((member) => { const option = document.createElement('option'); option.value = member.id; option.textContent = member.name; select.append(option); }); if (state.members.some((member) => member.id === selectedValue && member.active !== false)) select.value = selectedValue; }); updateLoanEligibility(); }
-function render() { renderSummary(); renderMembers(); renderLoans(); renderLoanApplications(); renderActivity(); renderContributions(); updateMemberOptions(); }
+function render() { renderSummary(); renderMembers(); renderLoans(); renderLoanApplications(); renderAnalytics(); renderActivity(); renderContributions(); updateMemberOptions(); }
 function updatePaymentLimit() {
 	const loan = state.loans.find((item) => item.id === $('#payment-loan-id').value);
 	const amountInput = $('#payment-amount');
