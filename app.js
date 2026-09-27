@@ -274,6 +274,7 @@ function renderAnalytics() {
 	const monthX = (index) => left + index * monthGap;
 	const moneyY = (value) => bottom - (Math.min(value, moneyMax) / moneyMax) * plotHeight;
 	const countY = (value) => bottom - (value / countMax) * plotHeight;
+	const compactMoney = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', notation: 'compact', maximumFractionDigits: 1 });
 	const addSvg = (tag, attrs, text) => {
 		const element = document.createElementNS(ns, tag);
 		Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
@@ -300,10 +301,18 @@ function renderAnalytics() {
 		addSvg('polyline', { points, class: `analytics-line ${className}` });
 		monthly.forEach((month, index) => {
 			const value = month[key];
-			const circle = addSvg('circle', { cx: monthX(index), cy: scale(value), r: 4.5, class: `analytics-point ${className}` });
+			const x = monthX(index);
+			const y = scale(value);
+			const circle = addSvg('circle', { cx: x, cy: y, r: 4.5, class: `analytics-point ${className}` });
 			const title = document.createElementNS(ns, 'title');
 			title.textContent = `${month.month}: ${key === 'loanCount' ? `${value} loans` : formatMoney(value)}`;
 			circle.append(title);
+			if (value > 0) {
+				const isCount = key === 'loanCount';
+				const labelX = x + (isCount ? -7 : 7);
+				const labelY = Math.max(top - 6, Math.min(bottom + 13, y + (key === 'interest' ? 15 : -8)));
+				addSvg('text', { x: labelX, y: labelY, class: `analytics-data-label ${className}`, 'text-anchor': isCount ? 'end' : 'start' }, isCount ? String(value) : compactMoney.format(value));
+			}
 		});
 	};
 	drawSeries('loanCount', countY, 'analytics-series-count');
