@@ -261,16 +261,18 @@ function renderAnalytics() {
 	svg.setAttribute('viewBox', '0 0 920 490');
 	svg.setAttribute('role', 'presentation');
 	svg.setAttribute('focusable', 'false');
-	const left = 130;
-	const right = 830;
-	const top = 72;
-	const bottom = 418;
+	const left = 104;
+	const right = 804;
+	const top = 68;
+	const bottom = 398;
 	const plotWidth = right - left;
-	const rowGap = (bottom - top) / 11;
+	const plotHeight = bottom - top;
+	const monthGap = plotWidth / 11;
 	const moneyMax = Math.max(1, ...monthly.map((month) => Math.max(month.principal, month.interest)));
 	const countMax = Math.max(1, ...monthly.map((month) => month.loanCount));
-	const moneyScale = (value) => left + (value / moneyMax) * plotWidth;
-	const countScale = (value) => left + (value / countMax) * plotWidth;
+	const monthX = (index) => left + index * monthGap;
+	const moneyY = (value) => bottom - (value / moneyMax) * plotHeight;
+	const countY = (value) => bottom - (value / countMax) * plotHeight;
 	const addSvg = (tag, attrs, text) => {
 		const element = document.createElementNS(ns, tag);
 		Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
@@ -279,33 +281,33 @@ function renderAnalytics() {
 		return element;
 	};
 	for (let tick = 0; tick <= 4; tick += 1) {
-		const x = left + (plotWidth * tick) / 4;
+		const y = bottom - (plotHeight * tick) / 4;
 		const amount = (moneyMax * tick) / 4;
-		addSvg('line', { x1: x, y1: top - 12, x2: x, y2: bottom + 6, class: 'analytics-grid-line' });
-		addSvg('text', { x, y: bottom + 31, class: 'analytics-axis-label', 'text-anchor': 'middle' }, formatMoney(amount));
-		addSvg('text', { x, y: 39, class: 'analytics-axis-label analytics-count-axis-label', 'text-anchor': 'middle' }, String(Math.round((countMax * tick) / 4)));
+		addSvg('line', { x1: left, y1: y, x2: right, y2: y, class: 'analytics-grid-line' });
+		addSvg('text', { x: left - 10, y: y + 4, class: 'analytics-axis-label', 'text-anchor': 'end' }, formatMoney(amount));
+		addSvg('text', { x: right + 10, y: y + 4, class: 'analytics-axis-label analytics-count-axis-label', 'text-anchor': 'start' }, String(Math.round((countMax * tick) / 4)));
 	}
-	addSvg('text', { x: left, y: 14, class: 'analytics-axis-title' }, 'Loan count scale');
-	addSvg('text', { x: left, y: 480, class: 'analytics-axis-title' }, 'Amount (INR)');
+	addSvg('text', { x: 18, y: (top + bottom) / 2, class: 'analytics-axis-title', transform: `rotate(-90 18 ${(top + bottom) / 2})`, 'text-anchor': 'middle' }, 'Amount (INR)');
+	addSvg('text', { x: 900, y: (top + bottom) / 2, class: 'analytics-axis-title', transform: `rotate(90 900 ${(top + bottom) / 2})`, 'text-anchor': 'middle' }, 'Loan count');
 	monthly.forEach((month, index) => {
-		const y = top + index * rowGap;
-		addSvg('line', { x1: left, y1: y, x2: right, y2: y, class: 'analytics-month-grid' });
-		addSvg('text', { x: left - 16, y: y + 5, class: 'analytics-month-label', 'text-anchor': 'end' }, month.month);
+		const x = monthX(index);
+		addSvg('line', { x1: x, y1: top, x2: x, y2: bottom, class: 'analytics-month-grid' });
+		addSvg('text', { x, y: bottom + 25, class: 'analytics-month-label', 'text-anchor': 'middle' }, month.month);
 	});
 	const drawSeries = (key, scale, className) => {
-		const points = monthly.map((month, index) => `${scale(month[key])},${top + index * rowGap}`).join(' ');
+		const points = monthly.map((month, index) => `${monthX(index)},${scale(month[key])}`).join(' ');
 		addSvg('polyline', { points, class: `analytics-line ${className}` });
 		monthly.forEach((month, index) => {
 			const value = month[key];
-			const circle = addSvg('circle', { cx: scale(value), cy: top + index * rowGap, r: 4.5, class: `analytics-point ${className}` });
+			const circle = addSvg('circle', { cx: monthX(index), cy: scale(value), r: 4.5, class: `analytics-point ${className}` });
 			const title = document.createElementNS(ns, 'title');
 			title.textContent = `${month.month}: ${key === 'loanCount' ? `${value} loans` : formatMoney(value)}`;
 			circle.append(title);
 		});
 	};
-	drawSeries('principal', moneyScale, 'analytics-series-principal');
-	drawSeries('interest', moneyScale, 'analytics-series-interest');
-	drawSeries('loanCount', countScale, 'analytics-series-count');
+	drawSeries('principal', moneyY, 'analytics-series-principal');
+	drawSeries('interest', moneyY, 'analytics-series-interest');
+	drawSeries('loanCount', countY, 'analytics-series-count');
 	container.append(svg);
 }
 function renderActivity() { const items = [...(state.contributions || []).map((item) => ({ date: item.date, createdAt: item.createdAt, label: `${item.memberId ? memberName(item.memberId) : 'Group fund'} contributed ${formatMoney(item.amount)}` })), ...state.loans.map((loan) => ({ date: loan.date, createdAt: loan.createdAt, label: `${memberName(loan.memberId)} took a loan of ${formatMoney(loan.principal)}` })), ...state.loans.flatMap((loan) => loan.payments.map((payment) => ({ date: payment.date, createdAt: payment.createdAt, label: `${memberName(loan.memberId)} paid ${formatMoney(payment.amount)}` })))].sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).slice(0, 8); const list = $('#activity-list'); list.replaceChildren(); $('#activity-empty').hidden = items.length > 0; items.forEach((item) => { const row = document.createElement('div'); row.className = 'activity-row'; row.innerHTML = `<span class="activity-dot"></span><div><strong>${escapeHtml(item.label)}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}</small></div>`; list.append(row); }); }
