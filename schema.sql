@@ -40,6 +40,7 @@ drop policy if exists "admins can manage contributions" on public.contributions;
 drop policy if exists "users can read own profile" on public.profiles;
 drop policy if exists "admins can read all loan applications" on public.loan_applications;
 drop policy if exists "members can read own loan applications" on public.loan_applications;
+drop policy if exists "approved users can read all loan applications" on public.loan_applications;
 create policy "approved users can read members" on public.members for select to authenticated using (exists (select 1 from public.profiles where id = auth.uid()));
 create policy "admins can manage members" on public.members for all to authenticated using (public.is_admin()) with check (public.is_admin());
 create policy "approved users can read loans" on public.loans for select to authenticated using (exists (select 1 from public.profiles where id = auth.uid()));
@@ -49,8 +50,7 @@ create policy "admins can manage payments" on public.payments for all to authent
 create policy "approved users can read contributions" on public.contributions for select to authenticated using (exists (select 1 from public.profiles where id = auth.uid()));
 create policy "admins can manage contributions" on public.contributions for all to authenticated using (public.is_admin()) with check (public.is_admin());
 create policy "users can read own profile" on public.profiles for select to authenticated using (id = auth.uid());
-create policy "admins can read all loan applications" on public.loan_applications for select to authenticated using (public.is_admin());
-create policy "members can read own loan applications" on public.loan_applications for select to authenticated using (exists (select 1 from public.members where members.id = loan_applications.member_id and members.user_id = auth.uid()));
+create policy "approved users can read all loan applications" on public.loan_applications for select to authenticated using (exists (select 1 from public.profiles where profiles.id = auth.uid()));
 do $$ begin alter publication supabase_realtime add table public.members; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.loans; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.payments; exception when duplicate_object then null; end $$;
