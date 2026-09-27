@@ -26,7 +26,7 @@ async function loadRemoteState() {
 	const error = membersError || loansError || paymentsError || contributionsError;
 	if (error) throw error;
 	state.members = members.map((member) => ({ id: member.id, name: member.name, phone: member.phone, email: member.email, active: member.active, userId: member.user_id }));
-	state.loans = loans.map((loan) => ({ id: loan.id, memberId: loan.member_id, principal: Number(loan.principal), eligibleLimit: Number(loan.eligible_limit) || null, date: loan.loan_date, createdAt: loan.created_at, payments: payments.filter((payment) => payment.loan_id === loan.id).map((payment) => ({ id: payment.id, amount: Number(payment.amount), type: payment.payment_type || 'auto', date: payment.payment_date, createdAt: payment.created_at })) }));
+	state.loans = loans.map((loan) => ({ id: loan.id, memberId: loan.member_id, principal: Number(loan.principal), eligibleLimit: Number(loan.eligible_limit) || null, date: loan.loan_date, createdAt: loan.created_at, payments: payments.filter((payment) => payment.loan_id === loan.id).map((payment) => ({ id: payment.id, amount: Number(payment.amount), type: String(payment.payment_type || 'auto').toLowerCase(), date: payment.payment_date, createdAt: payment.created_at })) }));
 	state.contributions = contributions.map((item) => ({ id: item.id, memberId: item.member_id, amount: Number(item.amount), date: item.contribution_date, createdAt: item.created_at, note: item.note || '' }));
 	const { data: applications, error: applicationsError } = await supabaseClient.from('loan_applications').select('*').order('submitted_at', { ascending: true });
 	state.loanApplicationsLoadError = applicationsError?.message || '';
@@ -246,11 +246,12 @@ function renderAnalytics() {
 			month.loanCount += 1;
 		}
 		loan.payments.forEach((payment) => {
-			if (payment.type === 'principal') return;
+			if (payment.type !== 'interest' && payment.type !== 'auto') return;
 			const paymentDate = new Date(`${payment.date}T00:00:00`);
 			if (paymentDate.getFullYear() === year) monthly[paymentDate.getMonth()].interest += Number(payment.amount);
 		});
 	});
+	$('#analytics-month-table').innerHTML = monthly.map((month) => `<tr><th scope="row">${month.month}</th><td>${formatMoney(month.principal)}</td><td>${formatMoney(month.interest)}</td><td>${month.loanCount}</td></tr>`).join('');
 	const container = $('#analytics-monthly-chart');
 	container.replaceChildren();
 	const hasActivity = monthly.some((month) => month.principal > 0 || month.interest > 0 || month.loanCount > 0);
@@ -306,9 +307,9 @@ function renderAnalytics() {
 			circle.append(title);
 		});
 	};
+	drawSeries('loanCount', countY, 'analytics-series-count');
 	drawSeries('principal', moneyY, 'analytics-series-principal');
 	drawSeries('interest', moneyY, 'analytics-series-interest');
-	drawSeries('loanCount', countY, 'analytics-series-count');
 	container.append(svg);
 }
 function renderActivity() { const items = [...(state.contributions || []).map((item) => ({ date: item.date, createdAt: item.createdAt, label: `${item.memberId ? memberName(item.memberId) : 'Group fund'} contributed ${formatMoney(item.amount)}` })), ...state.loans.map((loan) => ({ date: loan.date, createdAt: loan.createdAt, label: `${memberName(loan.memberId)} took a loan of ${formatMoney(loan.principal)}` })), ...state.loans.flatMap((loan) => loan.payments.map((payment) => ({ date: payment.date, createdAt: payment.createdAt, label: `${memberName(loan.memberId)} paid ${formatMoney(payment.amount)}` })))].sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).slice(0, 8); const list = $('#activity-list'); list.replaceChildren(); $('#activity-empty').hidden = items.length > 0; items.forEach((item) => { const row = document.createElement('div'); row.className = 'activity-row'; row.innerHTML = `<span class="activity-dot"></span><div><strong>${escapeHtml(item.label)}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}</small></div>`; list.append(row); }); }
