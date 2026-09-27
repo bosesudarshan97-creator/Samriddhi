@@ -64,7 +64,7 @@ async function migrateLocalState() {
 	}
 	localStorage.removeItem(STORAGE_KEY);
 }
-async function saveRecord(table, record) { const { error } = await supabaseClient.from(table).insert(record); if (error) throw error; await refreshRemoteState(); }
+async function saveRecord(table, record) { const { error } = await supabaseClient.from(table).insert(record); if (error) throw error; await refreshRemoteState(); renderAnalytics(); }
 async function inviteMember(record) { const { data, error } = await supabaseClient.functions.invoke('invite-member', { body: record }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
 async function removeMember(memberId) { const { data, error } = await supabaseClient.functions.invoke('remove-member', { body: { memberId } }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
 async function resetLedger() { const { data, error } = await supabaseClient.functions.invoke('reset-ledger', { body: {} }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
@@ -251,7 +251,6 @@ function renderAnalytics() {
 			if (paymentDate.getFullYear() === year) monthly[paymentDate.getMonth()].interest += Number(payment.amount);
 		});
 	});
-	$('#analytics-month-table').innerHTML = monthly.map((month) => `<tr><th scope="row">${month.month}</th><td>${formatMoney(month.principal)}</td><td>${formatMoney(month.interest)}</td><td>${month.loanCount}</td></tr>`).join('');
 	const container = $('#analytics-monthly-chart');
 	container.replaceChildren();
 	const hasActivity = monthly.some((month) => month.principal > 0 || month.interest > 0 || month.loanCount > 0);
