@@ -268,10 +268,11 @@ function renderAnalytics() {
 	const plotWidth = right - left;
 	const plotHeight = bottom - top;
 	const monthGap = plotWidth / 11;
-	const moneyMax = Math.max(1, ...monthly.map((month) => Math.max(month.principal, month.interest)));
+	const groupContributionTotal = (state.contributions || []).reduce((total, item) => total + Number(item.amount), 0);
+	const moneyMax = groupContributionTotal > 0 ? groupContributionTotal : Math.max(1, ...monthly.map((month) => Math.max(month.principal, month.interest)));
 	const countMax = Math.max(1, ...monthly.map((month) => month.loanCount));
 	const monthX = (index) => left + index * monthGap;
-	const moneyY = (value) => bottom - (value / moneyMax) * plotHeight;
+	const moneyY = (value) => bottom - (Math.min(value, moneyMax) / moneyMax) * plotHeight;
 	const countY = (value) => bottom - (value / countMax) * plotHeight;
 	const addSvg = (tag, attrs, text) => {
 		const element = document.createElementNS(ns, tag);
