@@ -67,7 +67,8 @@ async function migrateLocalState() {
 async function saveRecord(table, record) { const { error } = await supabaseClient.from(table).insert(record); if (error) throw error; await refreshRemoteState(); renderAnalytics(); }
 async function inviteMember(record) { const { data, error } = await supabaseClient.functions.invoke('invite-member', { body: record }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
 async function removeMember(memberId) { const { data, error } = await supabaseClient.functions.invoke('remove-member', { body: { memberId } }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
-async function resetLedger() { const { data, error } = await supabaseClient.functions.invoke('reset-ledger', { body: {} }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
+async function resetLedger() { const { data, error } = await supabaseClient.functions.invoke('reset-ledger', { body: {} }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); return data; }
+async function loadLedgerArchives() { const errorElement = $('#archive-error'); errorElement.hidden = true; const { data, error } = await supabaseClient.from('ledger_archives').select('id, archived_at, archived_by, reason, snapshot').order('archived_at', { ascending: false }); if (error) { errorElement.textContent = `Could not load archives: ${error.message}. Run the latest schema.sql in Supabase if the archive table is missing.`; errorElement.hidden = false; return; } const list = $('#archive-list'); list.replaceChildren(); $('#archive-empty').hidden = data.length > 0; data.forEach((archive) => { const row = document.createElement('article'); row.className = 'archive-row'; const counts = Object.entries(archive.snapshot || {}).map(([table, rows]) => `${table.replace('_', ' ')}: ${rows.length}`).join(' · '); row.innerHTML = `<div class="archive-details"><strong>${escapeHtml(formatDateTime(archive.archived_at))}</strong><small>${escapeHtml(archive.reason)} · ${escapeHtml(counts)}</small></div><button class="secondary-button" type="button" data-download-archive="${archive.id}">Download JSON</button>`; list.append(row); }); }
 async function submitLoanApplication(amount, purpose) { const { data, error } = await supabaseClient.functions.invoke('submit-loan-application', { body: { amount, purpose } }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
 async function decideLoanApplication(applicationId, decision) { const { data, error } = await supabaseClient.functions.invoke('decide-loan-application', { body: { applicationId, decision } }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); await refreshRemoteState(); }
 async function ensureCurrentUserMember() { const { data, error } = await supabaseClient.functions.invoke('ensure-member', { body: {} }); if (error) { let message = error.message; try { const details = await error.context?.json(); message = details?.error || message; } catch { /* The gateway may return a non-JSON error. */ } throw new Error(message); } if (data?.error) throw new Error(data.error); }
@@ -366,6 +367,8 @@ document.addEventListener('click', async (event) => {
 	const payment = target.closest('[data-payment]');
 	const historyToggle = target.closest('[data-payment-history]');
 	const shareReport = target.closest('#share-fund-report');
+	const refreshArchives = target.closest('#refresh-archives');
+	const downloadArchive = target.closest('[data-download-archive]');
 	const memberWhatsApp = target.closest('[data-whatsapp]');
 	const loanWhatsApp = target.closest('[data-whatsapp-loan]');
 	const edit = target.closest('[data-edit-member]');
@@ -376,6 +379,21 @@ document.addEventListener('click', async (event) => {
 		document.querySelectorAll('.tab, .tab-panel').forEach((element) => element.classList.remove('is-active'));
 		tab.classList.add('is-active');
 		$(`[data-panel="${tab.dataset.tab}"]`).classList.add('is-active');
+		if (tab.dataset.tab === 'archives') loadLedgerArchives();
+	}
+	if (refreshArchives) loadLedgerArchives();
+	if (downloadArchive) {
+		try {
+			const { data, error } = await supabaseClient.from('ledger_archives').select('*').eq('id', downloadArchive.dataset.downloadArchive).single();
+			if (error) throw error;
+			const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement('a');
+			link.href = url;
+			link.download = `samriddhi-ledger-archive-${data.archived_at.slice(0, 10)}.json`;
+			link.click();
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		} catch (error) { showDataError(error); }
 	}
 	if (payment) {
 		$('#payment-loan-id').value = payment.dataset.payment;
@@ -433,7 +451,7 @@ $('#forgot-password').addEventListener('click', () => { authMode = 'reset'; $('#
 $('#back-to-sign-in').addEventListener('click', () => { authMode = 'sign-in'; $('#reset-error').hidden = true; $('#password-error').hidden = true; applyAuthState(); });
 $('#reset-form').addEventListener('submit', async (event) => { event.preventDefault(); if (!supabaseClient) return; const errorElement = $('#reset-error'); errorElement.hidden = true; const redirectTo = `${window.location.origin}${window.location.pathname}`; const { error } = await supabaseClient.auth.resetPasswordForEmail($('#reset-email').value, { redirectTo }); errorElement.textContent = error?.message || 'Reset email sent. Check your inbox.'; errorElement.hidden = false; if (!error) event.target.reset(); });
 $('#sign-out').addEventListener('click', () => supabaseClient?.auth.signOut());
-$('#reset-ledger').addEventListener('click', async () => { if (!window.confirm('Reset all contributions, loans, payments, and activity? Member records will remain. This cannot be undone.')) return; try { await resetLedger(); showToast('Ledger reset. Members were preserved.'); } catch (error) { showDataError(error); } });
+$('#reset-ledger').addEventListener('click', async () => { if (!window.confirm('Save a complete archive, then clear contributions, loans, payments, and loan applications? Members and login accounts will remain.')) return; try { const result = await resetLedger(); showToast(`Ledger reset. Archive ${result.archiveId?.slice(0, 8) || 'saved'} is available in Archives.`); } catch (error) { showDataError(error); } });
 $('#invite-form').addEventListener('submit', async (event) => { event.preventDefault(); if (!supabaseClient) return; const errorElement = $('#invite-error'); errorElement.hidden = true; try { await inviteMember({ name: $('#invite-name').value.trim(), phone: $('#invite-phone').value.trim(), email: $('#invite-email').value.trim() }); event.target.closest('dialog').close(); event.target.reset(); showToast('Invitation sent'); } catch (error) { errorElement.textContent = error.message || 'Could not send invitation'; errorElement.hidden = false; } });
 $('#edit-member-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const id = $('#edit-member-id').value; const record = { name: $('#edit-member-name').value.trim(), phone: $('#edit-member-phone').value.trim() }; if (supabaseClient) { const { error } = await supabaseClient.from('members').update(record).eq('id', id); if (error) throw error; await refreshRemoteState(); } else { const member = state.members.find((item) => item.id === id); if (member) Object.assign(member, record); saveLocalState(); render(); } event.target.closest('dialog').close(); event.target.reset(); showToast('Member details updated'); } catch (error) { showDataError(error); } });
 $('#contribution-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const record = { member_id: $('#contribution-member').value, amount: Math.round(Number($('#contribution-amount').value)), contribution_date: $('#contribution-date').value, note: $('#contribution-note').value.trim() || null }; if (supabaseClient) await saveRecord('contributions', record); else { state.contributions = state.contributions || []; state.contributions.push({ id: id(), memberId: record.member_id, amount: record.amount, date: record.contribution_date, createdAt: new Date().toISOString(), note: record.note || '' }); saveLocalState(); render(); } event.target.closest('dialog').close(); event.target.reset(); showToast('Contribution recorded'); } catch (error) { showDataError(error); } });

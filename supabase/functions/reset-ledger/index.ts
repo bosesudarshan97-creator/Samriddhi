@@ -24,12 +24,33 @@ Deno.serve(async (request) => {
   const { data: profile, error: profileError } = await adminClient.from('profiles').select('role').eq('id', user.id).maybeSingle();
   if (profileError || profile?.role !== 'admin') return json({ error: 'Administrator access required' }, 403);
 
-  for (const table of ['payments', 'contributions', 'loans']) {
-    const { error } = await adminClient.from(table).delete().not('id', 'is', null);
-    if (error) return json({ error: error.message }, 400);
+  const tableNames = ['members', 'contributions', 'loans', 'payments', 'loan_applications'] as const;
+  const snapshot: Record<string, unknown[]> = {};
+  for (const table of tableNames) {
+    const rows: unknown[] = [];
+    const pageSize = 1000;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await adminClient.from(table).select('*').range(offset, offset + pageSize - 1);
+      if (error) return json({ error: `Archive cancelled: could not read ${table}: ${error.message}` }, 400);
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+    snapshot[table] = rows;
   }
 
-  return json({ success: true });
+  const { data: archive, error: archiveError } = await adminClient.from('ledger_archives').insert({
+    archived_by: user.id,
+    reason: 'Before app data reset',
+    snapshot,
+  }).select('id, archived_at').single();
+  if (archiveError) return json({ error: `Reset cancelled because the archive could not be saved: ${archiveError.message}` }, 400);
+
+  for (const table of ['payments', 'loan_applications', 'contributions', 'loans']) {
+    const { error } = await adminClient.from(table).delete().not('id', 'is', null);
+    if (error) return json({ error: `Archive ${archive.id} was saved, but clearing ${table} failed: ${error.message}`, archiveId: archive.id }, 400);
+  }
+
+  return json({ success: true, archiveId: archive.id, archivedAt: archive.archived_at, archivedRows: Object.fromEntries(Object.entries(snapshot).map(([table, rows]) => [table, rows.length])) });
 });
 
 function json(body: Record<string, unknown>, status = 200) {
