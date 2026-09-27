@@ -17,19 +17,20 @@ function loadLocalState() { try { const saved = JSON.parse(localStorage.getItem(
 function saveLocalState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 function showDataError(error) { console.error(error); showToast(error?.message || 'Could not save the shared ledger'); }
 async function loadRemoteState() {
-	const [{ data: members, error: membersError }, { data: loans, error: loansError }, { data: payments, error: paymentsError }, { data: contributions, error: contributionsError }, { data: applications, error: applicationsError }] = await Promise.all([
+	const [{ data: members, error: membersError }, { data: loans, error: loansError }, { data: payments, error: paymentsError }, { data: contributions, error: contributionsError }] = await Promise.all([
 		supabaseClient.from('members').select('*').order('created_at'),
 		supabaseClient.from('loans').select('*').order('loan_date'),
 		supabaseClient.from('payments').select('*').order('payment_date'),
-		supabaseClient.from('contributions').select('*').order('contribution_date'),
-		supabaseClient.from('loan_applications').select('*').order('submitted_at', { ascending: true })
+		supabaseClient.from('contributions').select('*').order('contribution_date')
 	]);
-	const error = membersError || loansError || paymentsError || contributionsError || applicationsError;
+	const error = membersError || loansError || paymentsError || contributionsError;
 	if (error) throw error;
 	state.members = members.map((member) => ({ id: member.id, name: member.name, phone: member.phone, email: member.email, active: member.active, userId: member.user_id }));
 	state.loans = loans.map((loan) => ({ id: loan.id, memberId: loan.member_id, principal: Number(loan.principal), eligibleLimit: Number(loan.eligible_limit) || null, date: loan.loan_date, createdAt: loan.created_at, payments: payments.filter((payment) => payment.loan_id === loan.id).map((payment) => ({ id: payment.id, amount: Number(payment.amount), type: payment.payment_type || 'auto', date: payment.payment_date, createdAt: payment.created_at })) }));
 	state.contributions = contributions.map((item) => ({ id: item.id, memberId: item.member_id, amount: Number(item.amount), date: item.contribution_date, createdAt: item.created_at, note: item.note || '' }));
-	state.loanApplications = applications.map((item) => ({ id: item.id, memberId: item.member_id, amount: Number(item.requested_amount), eligibleLimit: Number(item.eligible_limit), purpose: item.purpose || '', status: item.status, submittedAt: item.submitted_at, decidedAt: item.decided_at, loanId: item.loan_id }));
+	const { data: applications, error: applicationsError } = await supabaseClient.from('loan_applications').select('*').order('submitted_at', { ascending: true });
+	state.loanApplicationsLoadError = applicationsError?.message || '';
+	state.loanApplications = applicationsError ? [] : (applications || []).map((item) => ({ id: item.id, memberId: item.member_id, amount: Number(item.requested_amount), eligibleLimit: Number(item.eligible_limit), purpose: item.purpose || '', status: item.status, submittedAt: item.submitted_at, decidedAt: item.decided_at, loanId: item.loan_id }));
 }
 function subscribeToLedger() {
 	if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
@@ -201,6 +202,9 @@ function renderLoans() {
 function renderLoanApplications() {
 	const list = $('#application-list');
 	list.replaceChildren();
+	const setupNotice = $('#application-setup-notice');
+	setupNotice.hidden = !state.loanApplicationsLoadError;
+	if (state.loanApplicationsLoadError) setupNotice.textContent = 'Loan applications are not set up in the database yet. An administrator must run the latest schema.sql in Supabase SQL Editor.';
 	const applications = (state.loanApplications || []).slice().sort((a, b) => {
 		if (a.status === 'pending' && b.status !== 'pending') return -1;
 		if (a.status !== 'pending' && b.status === 'pending') return 1;
