@@ -222,42 +222,91 @@ function renderLoanApplications() {
 		list.append(row);
 	});
 }
-function renderAnalyticsChart(container, entries, formatter, barClass) {
-	container.replaceChildren();
-	const maxValue = Math.max(0, ...entries.map((entry) => entry.value));
-	entries.forEach((entry) => {
-		const row = document.createElement('div');
-		row.className = 'analytics-row';
-		const label = document.createElement('div');
-		label.className = 'analytics-member';
-		label.textContent = entry.name;
-		const track = document.createElement('div');
-		track.className = 'analytics-track';
-		const bar = document.createElement('div');
-		bar.className = `analytics-bar ${barClass}`;
-		bar.style.width = `${maxValue > 0 ? Math.max(entry.value > 0 ? 1 : 0, (entry.value / maxValue) * 100) : 0}%`;
-		bar.setAttribute('aria-hidden', 'true');
-		track.append(bar);
-		const value = document.createElement('strong');
-		value.className = 'analytics-value';
-		value.textContent = formatter(entry.value);
-		row.append(label, track, value);
-		container.append(row);
-	});
-}
 function renderAnalytics() {
-	const members = state.members.filter((member) => member.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name));
-	const groupContributions = (state.contributions || []).reduce((total, item) => total + Number(item.amount), 0);
-	$('#analytics-empty').hidden = members.length > 0;
-	const loansToGroupPercent = members.map((member) => ({ name: member.name, value: groupContributions > 0 ? (memberTotalBorrowed(member.id) / groupContributions) * 100 : 0 }));
-	const interestByMember = members.map((member) => ({
-		name: member.name,
-		value: state.loans.filter((loan) => loan.memberId === member.id).reduce((total, loan) => total + loan.payments.filter((payment) => payment.type !== 'principal').reduce((sum, payment) => sum + Number(payment.amount), 0), 0),
-	}));
-	const activeLoansByMember = members.map((member) => ({ name: member.name, value: state.loans.filter((loan) => loan.memberId === member.id && loanTotals(loan).totalDue > 0.005).length }));
-	renderAnalyticsChart($('#analytics-loan-ratio'), loansToGroupPercent, (value) => `${value.toFixed(1)}%`, 'analytics-bar--ratio');
-	renderAnalyticsChart($('#analytics-interest'), interestByMember, formatMoney, 'analytics-bar--interest');
-	renderAnalyticsChart($('#analytics-active-loans'), activeLoansByMember, (value) => `${value}`, 'analytics-bar--count');
+	const yearSelect = $('#analytics-year');
+	const currentYear = new Date().getFullYear();
+	const years = new Set([currentYear]);
+	state.loans.forEach((loan) => years.add(Number(String(loan.date).slice(0, 4))));
+	state.loans.flatMap((loan) => loan.payments).forEach((payment) => years.add(Number(String(payment.date).slice(0, 4))));
+	const selectedYear = Number(yearSelect.value) || Math.max(...years);
+	const sortedYears = [...years].filter(Number.isFinite).sort((a, b) => b - a);
+	if (yearSelect.options.length !== sortedYears.length || sortedYears.some((year, index) => Number(yearSelect.options[index]?.value) !== year)) {
+		yearSelect.replaceChildren(...sortedYears.map((year) => new Option(String(year), String(year))));
+	}
+	if (!sortedYears.includes(selectedYear)) yearSelect.value = String(sortedYears[0]);
+	else yearSelect.value = String(selectedYear);
+	const year = Number(yearSelect.value);
+	const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+	const monthly = monthNames.map((month) => ({ month, principal: 0, interest: 0, loanCount: 0 }));
+	state.loans.forEach((loan) => {
+		const loanDate = new Date(`${loan.date}T00:00:00`);
+		if (loanDate.getFullYear() === year) {
+			const month = monthly[loanDate.getMonth()];
+			month.principal += Number(loan.principal);
+			month.loanCount += 1;
+		}
+		loan.payments.forEach((payment) => {
+			if (payment.type === 'principal') return;
+			const paymentDate = new Date(`${payment.date}T00:00:00`);
+			if (paymentDate.getFullYear() === year) monthly[paymentDate.getMonth()].interest += Number(payment.amount);
+		});
+	});
+	const container = $('#analytics-monthly-chart');
+	container.replaceChildren();
+	const hasActivity = monthly.some((month) => month.principal > 0 || month.interest > 0 || month.loanCount > 0);
+	$('#analytics-empty').hidden = hasActivity;
+
+	const ns = 'http://www.w3.org/2000/svg';
+	const svg = document.createElementNS(ns, 'svg');
+	svg.setAttribute('viewBox', '0 0 920 490');
+	svg.setAttribute('role', 'presentation');
+	svg.setAttribute('focusable', 'false');
+	const left = 130;
+	const right = 830;
+	const top = 72;
+	const bottom = 418;
+	const plotWidth = right - left;
+	const rowGap = (bottom - top) / 11;
+	const moneyMax = Math.max(1, ...monthly.map((month) => Math.max(month.principal, month.interest)));
+	const countMax = Math.max(1, ...monthly.map((month) => month.loanCount));
+	const moneyScale = (value) => left + (value / moneyMax) * plotWidth;
+	const countScale = (value) => left + (value / countMax) * plotWidth;
+	const addSvg = (tag, attrs, text) => {
+		const element = document.createElementNS(ns, tag);
+		Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
+		if (text !== undefined) element.textContent = text;
+		svg.append(element);
+		return element;
+	};
+	for (let tick = 0; tick <= 4; tick += 1) {
+		const x = left + (plotWidth * tick) / 4;
+		const amount = (moneyMax * tick) / 4;
+		addSvg('line', { x1: x, y1: top - 12, x2: x, y2: bottom + 6, class: 'analytics-grid-line' });
+		addSvg('text', { x, y: bottom + 31, class: 'analytics-axis-label', 'text-anchor': 'middle' }, formatMoney(amount));
+		addSvg('text', { x, y: 39, class: 'analytics-axis-label analytics-count-axis-label', 'text-anchor': 'middle' }, String(Math.round((countMax * tick) / 4)));
+	}
+	addSvg('text', { x: left, y: 14, class: 'analytics-axis-title' }, 'Loan count scale');
+	addSvg('text', { x: left, y: 480, class: 'analytics-axis-title' }, 'Amount (INR)');
+	monthly.forEach((month, index) => {
+		const y = top + index * rowGap;
+		addSvg('line', { x1: left, y1: y, x2: right, y2: y, class: 'analytics-month-grid' });
+		addSvg('text', { x: left - 16, y: y + 5, class: 'analytics-month-label', 'text-anchor': 'end' }, month.month);
+	});
+	const drawSeries = (key, scale, className) => {
+		const points = monthly.map((month, index) => `${scale(month[key])},${top + index * rowGap}`).join(' ');
+		addSvg('polyline', { points, class: `analytics-line ${className}` });
+		monthly.forEach((month, index) => {
+			const value = month[key];
+			const circle = addSvg('circle', { cx: scale(value), cy: top + index * rowGap, r: 4.5, class: `analytics-point ${className}` });
+			const title = document.createElementNS(ns, 'title');
+			title.textContent = `${month.month}: ${key === 'loanCount' ? `${value} loans` : formatMoney(value)}`;
+			circle.append(title);
+		});
+	};
+	drawSeries('principal', moneyScale, 'analytics-series-principal');
+	drawSeries('interest', moneyScale, 'analytics-series-interest');
+	drawSeries('loanCount', countScale, 'analytics-series-count');
+	container.append(svg);
 }
 function renderActivity() { const items = [...(state.contributions || []).map((item) => ({ date: item.date, createdAt: item.createdAt, label: `${item.memberId ? memberName(item.memberId) : 'Group fund'} contributed ${formatMoney(item.amount)}` })), ...state.loans.map((loan) => ({ date: loan.date, createdAt: loan.createdAt, label: `${memberName(loan.memberId)} took a loan of ${formatMoney(loan.principal)}` })), ...state.loans.flatMap((loan) => loan.payments.map((payment) => ({ date: payment.date, createdAt: payment.createdAt, label: `${memberName(loan.memberId)} paid ${formatMoney(payment.amount)}` })))].sort((a, b) => recordTimestamp(b) - recordTimestamp(a)).slice(0, 8); const list = $('#activity-list'); list.replaceChildren(); $('#activity-empty').hidden = items.length > 0; items.forEach((item) => { const row = document.createElement('div'); row.className = 'activity-row'; row.innerHTML = `<span class="activity-dot"></span><div><strong>${escapeHtml(item.label)}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}</small></div>`; list.append(row); }); }
 function renderContributions() { const list = $('#contribution-list'); list.replaceChildren(); const contributions = (state.contributions || []).slice().sort((a, b) => recordTimestamp(b) - recordTimestamp(a)); $('#contribution-empty').hidden = contributions.length > 0; contributions.forEach((item) => { const row = document.createElement('div'); row.className = 'contribution-row'; row.innerHTML = `<div><strong>${escapeHtml(item.memberId ? memberName(item.memberId) : 'Group fund')}</strong><small>${formatDateTime(item.createdAt || `${item.date}T00:00:00`)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</small></div><strong class="contribution-amount">${formatMoney(item.amount)}</strong>`; list.append(row); }); }
@@ -382,6 +431,7 @@ $('#loan-form').addEventListener('submit', async (event) => { event.preventDefau
 $('#payment-type').addEventListener('change', updatePaymentLimit);
 $('#payment-amount').addEventListener('input', validatePaymentAmount);
 $('#payment-form').addEventListener('submit', async (event) => { event.preventDefault(); const loan = state.loans.find((item) => item.id === $('#payment-loan-id').value); if (!loan || !validatePaymentAmount()) return; const amount = Number($('#payment-amount').value); const type = $('#payment-type').value; try { if (supabaseClient) await saveRecord('payments', { loan_id: loan.id, amount, payment_type: type, payment_date: $('#payment-date').value }); else { loan.payments.push({ id: id(), amount, type, date: $('#payment-date').value, createdAt: new Date().toISOString() }); saveLocalState(); render(); } event.target.closest('dialog').close(); event.target.reset(); showToast('Payment recorded'); } catch (error) { showDataError(error); } });
+$('#analytics-year').addEventListener('change', renderAnalytics);
 function applyTheme(theme) { document.documentElement.dataset.theme = theme; const dark = theme === 'dark'; $('#theme-toggle').textContent = dark ? 'Light mode' : 'Dark mode'; $('#theme-toggle').setAttribute('aria-pressed', String(dark)); }
 $('#theme-toggle').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem(THEME_KEY, next); applyTheme(next); });
 applyTheme(localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light');
