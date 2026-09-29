@@ -32,7 +32,7 @@ Deno.serve(async (request) => {
     if (profile.role !== 'admin') return json({ error: 'Administrator access required.' }, 403);
     const { data: records, error } = await adminClient.from('member_kyc').select('*').order('submitted_at', { ascending: false });
     if (error) return json({ error: error.message }, 400);
-    const memberIds = [...new Set((records || []).map((record) => record.member_id))];
+    const memberIds = [...new Set((records || []).map((record) => record.member_id).filter(Boolean))];
     const { data: members, error: membersError } = memberIds.length
       ? await adminClient.from('members').select('id, phone').in('id', memberIds)
       : { data: [], error: null };
@@ -41,10 +41,8 @@ Deno.serve(async (request) => {
     return json({ records: (records || []).map((record) => ({ ...record, member: memberMap.get(record.member_id) || null })) });
   }
 
-  const { data: member, error: memberError } = await adminClient.from('members').select('id, active').eq('user_id', user.id).eq('active', true).maybeSingle();
-  if (memberError || !member) return json({ error: 'Your active member profile was not found. Please contact an administrator.' }, 403);
   if (action === 'status') {
-    const { data, error } = await adminClient.from('member_kyc').select('id, submitted_at').eq('member_id', member.id).maybeSingle();
+    const { data, error } = await adminClient.from('member_kyc').select('id, submitted_at').eq('user_id', user.id).maybeSingle();
     if (error) return json({ error: error.message }, 400);
     return json({ complete: Boolean(data), submittedAt: data?.submitted_at || null });
   }
@@ -59,10 +57,30 @@ Deno.serve(async (request) => {
   if (!/^[0-9]{6,34}$/.test(accountNumber)) return json({ error: 'Account number must contain 6 to 34 digits.' }, 400);
   if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) return json({ error: 'Enter a valid 11-character IFSC code.' }, 400);
 
-  const { error: saveError } = await adminClient.from('member_kyc').upsert({ member_id: member.id, user_id: user.id, full_name: fullName, account_number: accountNumber, ifsc_code: ifscCode, bank_name: bankName, branch }, { onConflict: 'member_id' });
+  const { data: existingKyc, error: kycLookupError } = await adminClient.from('member_kyc').select('id').eq('user_id', user.id).maybeSingle();
+  if (kycLookupError) return json({ error: kycLookupError.message }, 400);
+  const { data: existingMember, error: memberLookupError } = await adminClient.from('members').select('id').eq('user_id', user.id).maybeSingle();
+  if (memberLookupError) return json({ error: memberLookupError.message }, 400);
+
+  const kycRecord = { member_id: existingMember?.id || null, user_id: user.id, full_name: fullName, account_number: accountNumber, ifsc_code: ifscCode, bank_name: bankName, branch };
+  const saveResult = existingKyc
+    ? await adminClient.from('member_kyc').update({ ...kycRecord, updated_at: new Date().toISOString() }).eq('id', existingKyc.id)
+    : await adminClient.from('member_kyc').insert(kycRecord);
+  const saveError = saveResult.error;
   if (saveError) return json({ error: saveError.message }, 400);
-  const { error: updateMemberError } = await adminClient.from('members').update({ name: fullName }).eq('id', member.id);
-  if (updateMemberError) return json({ error: updateMemberError.message }, 400);
+
+  let memberId = existingMember?.id;
+  if (memberId) {
+    const { error } = await adminClient.from('members').update({ name: fullName, active: true }).eq('id', memberId);
+    if (error) return json({ error: error.message }, 400);
+  } else {
+    const phone = String(user.user_metadata?.phone || user.phone || 'Not provided').trim();
+    const { data: newMember, error } = await adminClient.from('members').insert({ user_id: user.id, email: user.email?.toLowerCase() || null, name: fullName, phone, active: true }).select('id').single();
+    if (error) return json({ error: error.message }, 400);
+    memberId = newMember.id;
+  }
+  const { error: linkError } = await adminClient.from('member_kyc').update({ member_id: memberId }).eq('user_id', user.id);
+  if (linkError) return json({ error: linkError.message }, 400);
   return json({ success: true });
   } catch (error) {
     console.error('member-kyc error:', error);
