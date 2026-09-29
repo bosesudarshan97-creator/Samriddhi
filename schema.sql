@@ -15,6 +15,7 @@ create table if not exists public.profiles (id uuid primary key references auth.
 create table if not exists public.loan_applications (id uuid primary key default gen_random_uuid(), member_id uuid not null references public.members(id), requested_amount numeric(12, 2) not null check (requested_amount > 0), eligible_limit numeric(12, 2) not null default 0, purpose text not null default '', status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')), submitted_at timestamptz not null default now(), decided_at timestamptz, decided_by uuid references auth.users(id), loan_id uuid references public.loans(id) on delete set null);
 alter table public.loan_applications add column if not exists eligible_limit numeric(12, 2) not null default 0;
 create table if not exists public.ledger_archives (id uuid primary key default gen_random_uuid(), archived_at timestamptz not null default now(), archived_by uuid references auth.users(id) on delete set null, reason text not null default 'Before app data reset', snapshot jsonb not null);
+create table if not exists public.member_kyc (id uuid primary key default gen_random_uuid(), member_id uuid not null unique references public.members(id) on delete cascade, user_id uuid not null unique references auth.users(id) on delete cascade, full_name text not null, account_number text not null, ifsc_code text not null, bank_name text not null, branch text not null, submitted_at timestamptz not null default now(), updated_at timestamptz not null default now());
 create index if not exists loan_applications_queue_idx on public.loan_applications(status, submitted_at);
 create index if not exists loan_applications_member_idx on public.loan_applications(member_id, submitted_at desc);
 create unique index if not exists loan_applications_one_pending_per_member_idx on public.loan_applications(member_id) where status = 'pending';
@@ -25,6 +26,9 @@ alter table public.contributions enable row level security;
 alter table public.profiles enable row level security;
 alter table public.loan_applications enable row level security;
 alter table public.ledger_archives enable row level security;
+alter table public.member_kyc enable row level security;
+revoke all on public.member_kyc from anon, authenticated;
+grant all on public.member_kyc to service_role;
 create or replace function public.is_admin() returns boolean language sql stable security definer set search_path = public as $$ select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin'); $$;
 drop policy if exists "authenticated users can read members" on public.members;
 drop policy if exists "authenticated users can read loans" on public.loans;
