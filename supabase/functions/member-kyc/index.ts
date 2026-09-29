@@ -59,7 +59,7 @@ Deno.serve(async (request) => {
   if (!/^[0-9]{6,34}$/.test(accountNumber)) return json({ error: 'Account number must contain 6 to 34 digits.' }, 400);
   if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) return json({ error: 'Enter a valid 11-character IFSC code.' }, 400);
 
-  const { error: saveError } = await adminClient.from('member_kyc').upsert({ member_id: member.id, user_id: user.id, full_name, account_number: accountNumber, ifsc_code: ifscCode, bank_name: bankName, branch }, { onConflict: 'member_id' });
+  const { error: saveError } = await adminClient.from('member_kyc').upsert({ member_id: member.id, user_id: user.id, full_name: fullName, account_number: accountNumber, ifsc_code: ifscCode, bank_name: bankName, branch }, { onConflict: 'member_id' });
   if (saveError) return json({ error: saveError.message }, 400);
   const { error: updateMemberError } = await adminClient.from('members').update({ name: fullName }).eq('id', member.id);
   if (updateMemberError) return json({ error: updateMemberError.message }, 400);
