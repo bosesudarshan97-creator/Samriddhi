@@ -12,13 +12,15 @@ Deno.serve(async (request) => {
   try {
   const authorization = request.headers.get('Authorization');
   if (!authorization) return json({ error: 'Authentication required' }, 401);
+  const accessToken = authorization.replace(/^Bearer\s+/i, '').trim();
+  if (!accessToken) return json({ error: 'Authentication required' }, 401);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return json({ error: 'Authentication required' }, 401);
+  const { data: { user }, error: userError } = await userClient.auth.getUser(accessToken);
+  if (userError || !user) return json({ error: 'Your sign-in session is missing or expired. Sign out, sign in again, and resubmit KYC.' }, 401);
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const { data: profile, error: profileError } = await adminClient.from('profiles').select('role').eq('id', user.id).maybeSingle();
