@@ -44,6 +44,26 @@ Deno.serve(async (request) => {
   if (action === 'status') {
     const { data, error } = await adminClient.from('member_kyc').select('id, submitted_at').eq('user_id', user.id).maybeSingle();
     if (error) return json({ error: error.message }, 400);
+    let { data: member, error: memberError } = await adminClient.from('members').select('id, user_id, email, active').eq('user_id', user.id).maybeSingle();
+    if (memberError) return json({ error: memberError.message }, 400);
+    if (!member && user.email) {
+      const { data: emailMember, error: emailError } = await adminClient.from('members').select('id, user_id, email, active').ilike('email', user.email.toLowerCase()).maybeSingle();
+      if (emailError) return json({ error: emailError.message }, 400);
+      if (emailMember && !emailMember.user_id) {
+        const { data: linkedMember, error: linkError } = await adminClient.from('members').update({ user_id: user.id }).eq('id', emailMember.id).is('user_id', null).select('id, user_id, email, active').maybeSingle();
+        if (linkError) return json({ error: linkError.message }, 400);
+        member = linkedMember;
+      } else if (emailMember?.user_id === user.id) {
+        member = emailMember;
+      }
+    }
+    if (member) {
+      const shouldBeActive = Boolean(data);
+      if (member.active !== shouldBeActive) {
+        const { error: activeError } = await adminClient.from('members').update({ active: shouldBeActive }).eq('id', member.id);
+        if (activeError) return json({ error: activeError.message }, 400);
+      }
+    }
     return json({ complete: Boolean(data), submittedAt: data?.submitted_at || null });
   }
   if (action !== 'submit') return json({ error: 'Unsupported action.' }, 400);
