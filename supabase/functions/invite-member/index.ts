@@ -40,8 +40,11 @@ Deno.serve(async (request) => {
     return json({ error: 'This email already belongs to a linked member account. Remove or update that account before inviting it again.' }, 409);
   }
 
+  const appSiteUrl = Deno.env.get('APP_SITE_URL') || 'https://www.samriddhicommunityfund.in';
+  const redirectTo = new URL('/?flow=invite', appSiteUrl).toString();
   const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-    data: { full_name: name, phone },
+    redirectTo,
+    data: { full_name: name, phone, requires_password_setup: true },
   });
   if (inviteError) return json({ error: inviteError.message }, 400);
 
