@@ -9,6 +9,7 @@ const corsHeaders = {
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
   const authorization = request.headers.get('Authorization');
   if (!authorization) return json({ error: 'Authentication required' }, 401);
 
@@ -61,6 +62,10 @@ Deno.serve(async (request) => {
   const { error: updateMemberError } = await adminClient.from('members').update({ name: fullName }).eq('id', member.id);
   if (updateMemberError) return json({ error: updateMemberError.message }, 400);
   return json({ success: true });
+  } catch (error) {
+    console.error('member-kyc error:', error);
+    return json({ error: error instanceof Error ? error.message : 'Unexpected KYC service error.' }, 500);
+  }
 });
 
 function json(body: Record<string, unknown>, status = 200) {
