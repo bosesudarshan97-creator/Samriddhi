@@ -13,7 +13,7 @@
     <div class="auth-card">
       <img class="fund-logo auth-logo" src="assets/fund-logo.png" alt="Samriddhi Community Fund logo">
       <p class="eyebrow">Together we grow</p>
-      <h1>Sign in to the fund</h1>
+      <h1 id="auth-title">Sign in to the fund</h1>
       <p class="auth-copy">Members can view the shared ledger. Admins can manage contributions, loans, and payments.</p>
       <form id="auth-form" class="auth-form">
         <label for="auth-email">Email</label>
@@ -22,6 +22,11 @@
         <input id="auth-password" type="password" autocomplete="current-password" minlength="6" required>
         <p id="auth-error" class="form-error" role="alert" hidden></p>
         <button class="primary-button" type="submit">Sign in</button>
+      </form>
+      <form id="invite-confirm-form" class="auth-form" hidden>
+        <p class="auth-copy">Your invitation is ready. Continue to verify it and create your password.</p>
+        <p id="invite-confirm-error" class="form-error" role="alert" hidden></p>
+        <button id="invite-confirm-button" class="primary-button" type="submit">Continue to password setup</button>
       </form>
       <form id="password-form" class="auth-form" hidden>
         <label for="new-password">Create password</label>
