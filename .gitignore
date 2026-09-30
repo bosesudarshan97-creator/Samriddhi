@@ -1,2 +1,4 @@
 .DS_Store
 supabase/.temp/
+dist/
+.env
